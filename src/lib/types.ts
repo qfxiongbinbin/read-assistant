@@ -2,6 +2,11 @@ export type Level = 'A2' | 'B1' | 'B2';
 
 export const LEVELS: readonly Level[] = ['A2', 'B1', 'B2'];
 
+/** Where the simplified text is rendered. */
+export type PanelMode = 'below' | 'side' | 'float';
+
+export const PANEL_MODES: readonly PanelMode[] = ['below', 'side', 'float'];
+
 export interface GlossaryEntry {
   term: string;
   simple: string;
@@ -15,6 +20,7 @@ export interface SimplifyResult {
 export interface Settings {
   enabled: boolean;
   level: Level;
+  panelMode: PanelMode;
   model: string;
   apiKey: string;
   disabledHosts: string[];
@@ -23,6 +29,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
   level: 'B1',
+  panelMode: 'below',
   model: 'deepseek-chat',
   apiKey: '',
   disabledHosts: [],

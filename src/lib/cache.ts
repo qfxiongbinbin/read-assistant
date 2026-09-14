@@ -2,9 +2,12 @@ import { hashKey } from './hash';
 import { storageGet, storageSet, storageRemove } from './storage';
 import {
   DEFAULT_SETTINGS,
+  LEVELS,
+  PANEL_MODES,
   SETTINGS_KEY,
   type CacheEntry,
   type Level,
+  type PanelMode,
   type Settings,
   type SimplifyResult,
 } from './types';
@@ -27,6 +30,14 @@ export function cacheKey(text: string, level: Level, model: string): string {
   );
 }
 
+function asLevel(value: unknown): Level {
+  return LEVELS.includes(value as Level) ? (value as Level) : DEFAULT_SETTINGS.level;
+}
+
+function asPanelMode(value: unknown): PanelMode {
+  return PANEL_MODES.includes(value as PanelMode) ? (value as PanelMode) : DEFAULT_SETTINGS.panelMode;
+}
+
 export async function getSettings(): Promise<Settings> {
   const stored = await storageGet<Record<string, unknown>>(SETTINGS_KEY);
   const value = stored?.[SETTINGS_KEY] as Partial<Settings> | undefined;
@@ -34,6 +45,8 @@ export async function getSettings(): Promise<Settings> {
   return {
     ...DEFAULT_SETTINGS,
     ...value,
+    level: asLevel(value.level),
+    panelMode: asPanelMode(value.panelMode),
     disabledHosts: Array.isArray(value.disabledHosts) ? value.disabledHosts : [],
   };
 }

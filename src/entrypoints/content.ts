@@ -1,10 +1,17 @@
 import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { getSettings } from '../lib/cache';
+import { placePanel, type PanelPlacement, type PointerPoint } from '../lib/position';
 import { blockText, collectBlocks, markBlocks, resolveBlock } from '../lib/segment';
 import { sendToBackground } from '../lib/storage';
 import { injectStyles, PANEL_CLASS } from '../lib/style';
-import { SETTINGS_KEY, type Level, type Settings, type SimplifyResponse } from '../lib/types';
+import {
+  SETTINGS_KEY,
+  type Level,
+  type PanelMode,
+  type Settings,
+  type SimplifyResponse,
+} from '../lib/types';
 
 interface PanelRefs {
   root: HTMLElement;
@@ -17,6 +24,10 @@ interface PanelRefs {
 interface OpenPanel {
   host: HTMLElement;
   refs: PanelRefs;
+  mode: PanelMode;
+  placement: PanelPlacement;
+  cleanup: (() => void)[];
+  point: PointerPoint;
 }
 
 const PANELS = new Map<HTMLElement, OpenPanel>();
@@ -72,20 +83,10 @@ function buildPanel(level: Level): PanelRefs {
   return { root, label, body, retry, close };
 }
 
-function hostFor(block: HTMLElement, root: HTMLElement): HTMLElement {
-  if (block.tagName === 'LI' || block.tagName === 'TD') {
-    const wrapper = document.createElement(block.tagName.toLowerCase());
-    wrapper.className = PANEL_CLASS + '__item';
-    wrapper.setAttribute('data-ra-skip', '1');
-    wrapper.appendChild(root);
-    return wrapper;
-  }
-  return root;
-}
-
 function closePanel(block: HTMLElement): void {
   const open = PANELS.get(block);
   if (!open) return;
+  for (const dispose of open.cleanup) dispose();
   open.host.remove();
   PANELS.delete(block);
   delete block.dataset.raActive;
@@ -93,6 +94,12 @@ function closePanel(block: HTMLElement): void {
 
 function closeAll(): void {
   for (const block of [...PANELS.keys()]) closePanel(block);
+}
+
+function closeMode(mode: PanelMode): void {
+  for (const [block, open] of [...PANELS.entries()]) {
+    if (open.mode === mode) closePanel(block);
+  }
 }
 
 function render(refs: PanelRefs, response: SimplifyResponse): void {
@@ -137,7 +144,7 @@ function render(refs: PanelRefs, response: SimplifyResponse): void {
   refs.body.appendChild(node);
 }
 
-async function toggle(block: HTMLElement): Promise<void> {
+async function toggle(block: HTMLElement, point: PointerPoint): Promise<void> {
   if (PANELS.has(block)) {
     closePanel(block);
     return;
@@ -145,12 +152,16 @@ async function toggle(block: HTMLElement): Promise<void> {
   const current = settings;
   if (!isActive() || !current) return;
 
+  const mode = current.panelMode;
+  if (mode === 'float') closeMode('float');
+
   const level = current.level;
   const refs = buildPanel(level);
-  const host = hostFor(block, refs.root);
-  block.insertAdjacentElement('afterend', host);
+  const placement = placePanel(mode, block, refs.root, point);
   block.dataset.raActive = '1';
-  PANELS.set(block, { host, refs });
+
+  const open: OpenPanel = { host: placement.host, refs, mode, placement, cleanup: [], point };
+  PANELS.set(block, open);
 
   refs.close.addEventListener('click', (event) => {
     event.preventDefault();
@@ -161,8 +172,23 @@ async function toggle(block: HTMLElement): Promise<void> {
     event.preventDefault();
     event.stopPropagation();
     closePanel(block);
-    void toggle(block);
+    void toggle(block, open.point);
   });
+
+  // Float mode: the card trails the cursor, but only while the cursor stays over
+  // the source paragraph. Moving towards the card freezes it, so it never runs away.
+  if (mode === 'float' && placement.moveTo) {
+    const moveTo = placement.moveTo;
+    const onMove = (event: MouseEvent): void => {
+      const target = event.target;
+      if (target instanceof Node && block.contains(target)) {
+        open.point = { x: event.clientX, y: event.clientY };
+        moveTo(open.point.x, open.point.y);
+      }
+    };
+    document.addEventListener('mousemove', onMove, true);
+    open.cleanup.push(() => document.removeEventListener('mousemove', onMove, true));
+  }
 
   let response: SimplifyResponse;
   try {
@@ -180,9 +206,10 @@ async function toggle(block: HTMLElement): Promise<void> {
     };
   }
 
-  const open = PANELS.get(block);
-  if (!open || open.host !== host) return;
+  if (PANELS.get(block) !== open) return;
   render(refs, response);
+  // The card grew while loading, so re-clamp it to the viewport.
+  placement.moveTo?.(open.point.x, open.point.y);
 }
 
 function onDocumentClick(event: MouseEvent): void {
@@ -191,13 +218,15 @@ function onDocumentClick(event: MouseEvent): void {
   if (!target || typeof target.closest !== 'function') return;
   if (target.closest('a, button, input, textarea, select, [contenteditable="true"], .' + PANEL_CLASS)) return;
 
-  const block = resolveBlock(target);
-  if (!block) return;
-
   const selection = window.getSelection();
   if (selection && selection.toString().trim().length > 0) return;
 
-  void toggle(block);
+  const block = resolveBlock(target);
+  if (!block) {
+    closeMode('float');
+    return;
+  }
+  void toggle(block, { x: event.clientX, y: event.clientY });
 }
 
 function scan(): void {
@@ -237,10 +266,16 @@ function deactivate(): void {
 }
 
 async function applySettings(): Promise<void> {
-  settings = await getSettings();
+  const previous = settings;
+  const next = await getSettings();
+  settings = next;
+
   if (!isActive()) {
     deactivate();
     return;
+  }
+  if (previous && (previous.panelMode !== next.panelMode || previous.level !== next.level)) {
+    closeAll();
   }
   injectStyles(document);
   scan();
@@ -249,7 +284,12 @@ async function applySettings(): Promise<void> {
 
 async function init(): Promise<void> {
   await applySettings();
+
   document.addEventListener('click', onDocumentClick, true);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeMode('float');
+  });
+
   browser.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local' || !changes[SETTINGS_KEY]) return;
     void applySettings();

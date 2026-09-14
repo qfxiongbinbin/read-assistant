@@ -32,6 +32,29 @@ const CSS = `
   background: none;
   padding: 0;
 }
+
+/* Detached cards: they must not reflow the page and must stay legible on any site. */
+.${PANEL_CLASS}--side,
+.${PANEL_CLASS}--float {
+  position: absolute;
+  z-index: 2147483600;
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  max-height: 70vh;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #ffffff;
+  color: #1b2432;
+  border: 1px solid rgba(45, 110, 220, 0.3);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(16, 30, 54, 0.18);
+}
+.${PANEL_CLASS}--float {
+  position: fixed;
+  width: 340px;
+  max-height: min(60vh, 460px);
+}
+
 .${PANEL_CLASS}__meta {
   display: flex;
   align-items: center;

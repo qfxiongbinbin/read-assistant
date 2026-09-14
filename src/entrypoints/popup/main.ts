@@ -1,6 +1,6 @@
 import { getSettings, saveSettings } from '../../lib/cache';
 import { queryActiveTab } from '../../lib/storage';
-import type { Level, Settings } from '../../lib/types';
+import type { Level, PanelMode, Settings } from '../../lib/types';
 
 function element<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -10,6 +10,7 @@ function element<T extends HTMLElement>(id: string): T {
 
 const enabledInput = element<HTMLInputElement>('enabled');
 const levelSelect = element<HTMLSelectElement>('level');
+const panelModeSelect = element<HTMLSelectElement>('panelMode');
 const modelSelect = element<HTMLSelectElement>('model');
 const apiKeyInput = element<HTMLInputElement>('apiKey');
 const siteOffInput = element<HTMLInputElement>('siteOff');
@@ -36,6 +37,7 @@ async function boot(): Promise<void> {
 
   enabledInput.checked = settings.enabled;
   levelSelect.value = settings.level;
+  panelModeSelect.value = settings.panelMode;
   modelSelect.value = settings.model;
   apiKeyInput.value = settings.apiKey;
 
@@ -57,6 +59,7 @@ saveButton.addEventListener('click', () => {
       const saved = await saveSettings({
         enabled: enabledInput.checked,
         level: levelSelect.value as Level,
+        panelMode: panelModeSelect.value as PanelMode,
         model: modelSelect.value,
         apiKey: apiKeyInput.value.trim(),
         disabledHosts: [...disabledHosts],
