@@ -1,5 +1,8 @@
 # readAssistant
 
+> Chrome extension that rewrites hard English into **simpler English** — same language, no translation.
+> Click a paragraph, or select a sentence, to get a short simple rewrite plus its key words and key phrases.
+
 把外语网页里"对你来说太难"的句子，改写成**同一种外语**的简单表达。
 
 不翻译成中文。目标是让大脑直接建立 `外语形式 -> 含义` 的映射，而不是绕道中文。
@@ -109,3 +112,14 @@ scripts/
 - 不做难度预判，需要手动点选
 - 抽取的关键词/短语不落库，还没有个人词表与"简化率随水平下降"的进度指标
 - 结果结构版本号是 `SCHEMA_VERSION`（当前 `v2`），改结构会顺带失效旧缓存
+
+## 数据来源
+
+`src/data/enFreq.ts` 里的 5000 高频词表由 `scripts/gen-freq.mjs` 从
+[first20hours/google-10000-english](https://github.com/first20hours/google-10000-english) 生成。
+该列表按词频排序，源自 Google Web Trillion Word Corpus；本项目只取前 5000 个，**仅用于本地难度判定**，
+不会发送给模型。
+
+## License
+
+[MIT](LICENSE)
