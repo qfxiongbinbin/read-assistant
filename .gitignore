@@ -1,0 +1,10 @@
+node_modules/
+.wxt/
+.output/
+.env
+.env.*
+!.env.example
+tmp/
+.npm-cache/
+*.log
+.DS_Store

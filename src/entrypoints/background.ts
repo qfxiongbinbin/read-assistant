@@ -1,0 +1,97 @@
+import { browser } from 'wxt/browser';
+import { defineBackground } from 'wxt/utils/define-background';
+import { cacheKey, getCached, getSettings, normalizeText, putCached } from '../lib/cache';
+import { chatJson } from '../lib/llm';
+import { ALLOWED_MODELS, buildMessages } from '../lib/prompt';
+import { parseResult, verify } from '../lib/verify';
+import type { RuntimeMessage, SimplifyRequest, SimplifyResponse } from '../lib/types';
+
+const MAX_ATTEMPTS = 3;
+
+async function handleSimplify(request: SimplifyRequest): Promise<SimplifyResponse> {
+  const settings = await getSettings();
+  const apiKey = settings.apiKey.trim();
+  if (!apiKey) {
+    return {
+      ok: false,
+      error: 'No DeepSeek API key yet. Click the readAssistant icon and add one.',
+      attempts: 0,
+    };
+  }
+
+  const model = ALLOWED_MODELS.includes(request.model) ? request.model : settings.model;
+  const level = request.level;
+  const text = normalizeText(request.text);
+  if (text.length < 20) {
+    return { ok: false, error: 'This paragraph is too short to simplify.', attempts: 0 };
+  }
+
+  const key = cacheKey(text, level, model);
+  const cached = await getCached(key);
+  if (cached) return { ok: true, result: cached, cached: true, attempts: 0 };
+
+  let violations: string[] = [];
+  let attempts = 0;
+
+  while (attempts < MAX_ATTEMPTS) {
+    attempts += 1;
+
+    let raw: string;
+    try {
+      raw = await chatJson({ apiKey, model, messages: buildMessages(text, level, violations) });
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        attempts,
+      };
+    }
+
+    const parsed = parseResult(raw);
+    if (!parsed) {
+      violations = ['The reply was not valid JSON. Reply with the JSON object only.'];
+      continue;
+    }
+
+    const outcome = verify(text, parsed);
+    if (outcome.ok) {
+      await putCached(key, parsed, level, model);
+      return { ok: true, result: parsed, cached: false, attempts };
+    }
+    violations = outcome.violations;
+  }
+
+  return {
+    ok: false,
+    error:
+      'Could not reach ' + level + ' after ' + MAX_ATTEMPTS + ' tries. Try level B2, or click Retry.',
+    attempts,
+  };
+}
+
+export default defineBackground(() => {
+  browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    const request = message as RuntimeMessage;
+    if (!request || typeof request !== 'object') return false;
+
+    if (request.type === 'simplify') {
+      void handleSimplify(request).then(
+        (response) => sendResponse(response),
+        (error: unknown) =>
+          sendResponse({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+            attempts: 0,
+          } satisfies SimplifyResponse),
+      );
+      return true;
+    }
+
+    if (request.type === 'getSettings') {
+      void getSettings().then((settings) => sendResponse({ ok: true, settings }));
+      return true;
+    }
+
+    return false;
+  });
+});
