@@ -4,6 +4,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+.gh-config/
 tmp/
 .npm-cache/
 *.log
