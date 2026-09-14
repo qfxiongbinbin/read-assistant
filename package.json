@@ -31,5 +31,13 @@
   "engines": {
     "node": ">=22"
   },
-  "author": "BrianX <qfxiongbin@163.com>"
+  "author": "BrianX <qfxiongbin@163.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qfxiongbinbin/read-assistant.git"
+  },
+  "homepage": "https://github.com/qfxiongbinbin/read-assistant#readme",
+  "bugs": {
+    "url": "https://github.com/qfxiongbinbin/read-assistant/issues"
+  }
 }

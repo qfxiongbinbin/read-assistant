@@ -55,13 +55,20 @@
 
 切换「显示位置」或「难度」会关闭当前已打开的卡片，避免混用两种位置。
 
-## 安装（开发版）
+## 安装
 
-1. `npm install`
-2. `npm run build`
-3. Chrome -> `chrome://extensions` -> 打开右上角"开发者模式" -> "加载已解压的扩展程序" -> 选 `.output/chrome-mv3`
-4. 点扩展图标，填入 DeepSeek API Key（在 platform.deepseek.com 创建），点 Save
-5. 打开任意英文网页：点击段落，或选中一句话后点 **Simplify**
+```bash
+git clone https://github.com/qfxiongbinbin/read-assistant.git
+cd read-assistant
+npm install
+npm run build
+```
+
+然后：
+
+1. Chrome -> `chrome://extensions` -> 打开右上角"开发者模式" -> "加载已解压的扩展程序" -> 选 `.output/chrome-mv3`
+2. 点扩展图标，填入 DeepSeek API Key（在 platform.deepseek.com 创建），点 Save
+3. 打开任意英文网页：点击段落，或选中一句话后点 **Simplify**
 
 > 没有图标文件，Chrome 会显示默认的拼图图标，不影响使用。
 
