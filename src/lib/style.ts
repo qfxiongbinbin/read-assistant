@@ -3,6 +3,17 @@ export const TRIGGER_CLASS = 'readassistant-trigger';
 const STYLE_ID = 'readassistant-style';
 
 const CSS = `
+/* Defensive: the host page's CSS must not be able to reveal our hidden controls. */
+.${PANEL_CLASS}[hidden],
+.${PANEL_CLASS} [hidden],
+.${TRIGGER_CLASS}[hidden] {
+  display: none !important;
+}
+.${PANEL_CLASS},
+.${PANEL_CLASS} * {
+  box-sizing: border-box;
+}
+
 [data-ra-ready='1'] {
   position: relative;
   transition: box-shadow 120ms ease, background-color 120ms ease;

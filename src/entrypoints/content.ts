@@ -70,6 +70,12 @@ function isActive(): boolean {
   return !settings.disabledHosts.includes(location.host);
 }
 
+/** The host page's CSS can override the [hidden] attribute, so hide it two ways. */
+function setHidden(element: HTMLElement, hidden: boolean): void {
+  element.hidden = hidden;
+  element.style.display = hidden ? 'none' : '';
+}
+
 function buildPanel(level: Level): PanelRefs {
   const root = document.createElement('div');
   root.className = PANEL_CLASS;
@@ -102,9 +108,9 @@ function buildPanel(level: Level): PanelRefs {
   const phonetics = makeButton('Aa', 'Show phonetics above every word');
 
   const retry = makeButton('Retry', 'Try again');
-  retry.hidden = true;
+  setHidden(retry, true);
 
-  const close = makeButton('\\u2715', 'Hide');
+  const close = makeButton('✕', 'Hide');
 
   meta.append(badge, label, spacer, playUk, playUs, phonetics, retry, close);
 
@@ -291,7 +297,7 @@ function render(
 
   if (!response.ok) {
     refs.label.textContent = 'Not simplified';
-    refs.retry.hidden = false;
+    setHidden(refs.retry, false);
     const node = document.createElement('p');
     node.className = PANEL_CLASS + '__status ' + PANEL_CLASS + '__error';
     node.textContent = response.error;
@@ -300,7 +306,7 @@ function render(
   }
 
   refs.label.textContent = 'Simplified';
-  refs.retry.hidden = true;
+  setHidden(refs.retry, true);
   refs.phonetics.classList.toggle(PANEL_CLASS + '__btn--on', phonetics);
   refs.body.classList.toggle(PANEL_CLASS + '__body--phonetics', phonetics);
 
