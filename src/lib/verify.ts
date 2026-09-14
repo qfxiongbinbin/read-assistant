@@ -1,5 +1,5 @@
 import { inFreqList } from '../data/enFreq';
-import type { KeyTerm, SimplifyResult } from './types';
+import type { ExplainResult, KeyTerm, SimplifyResult } from './types';
 
 export const HARD_WORD_LIMIT = 0.1;
 export const AVG_SENTENCE_WORD_LIMIT = 16;
@@ -211,4 +211,86 @@ export function verify(original: string, result: SimplifyResult): VerifyOutcome 
   }
 
   return { ok: violations.length === 0, violations };
+}
+
+export const MAX_EXPLANATION_WORDS = 20;
+export const MAX_EXPLANATION_HARD_WORDS = 1;
+export const MAX_SYNONYMS = 3;
+
+export function parseExplanation(raw: string, word: string): ExplainResult | null {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start === -1 || end <= start) return null;
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  const explanation = typeof parsed.explanation === 'string' ? parsed.explanation.trim() : '';
+  if (explanation.length === 0) return null;
+
+  const target = word.trim().toLowerCase();
+  const rawSynonyms = Array.isArray(parsed.synonyms) ? parsed.synonyms : [];
+  const seen = new Set<string>([target]);
+  const synonyms: string[] = [];
+  for (const item of rawSynonyms) {
+    if (typeof item !== 'string') continue;
+    const value = item.trim();
+    const key = value.toLowerCase();
+    if (value.length === 0 || seen.has(key)) continue;
+    seen.add(key);
+    synonyms.push(value);
+    if (synonyms.length >= MAX_SYNONYMS) break;
+  }
+
+  return { explanation, synonyms };
+}
+
+export function usesTargetWord(word: string, text: string): string[] {
+  const target = new Set(stems(word.trim().toLowerCase()));
+  const out: string[] = [];
+  for (const token of words(text)) {
+    if (stems(token).some((stem) => target.has(stem))) out.push(token);
+  }
+  return out;
+}
+
+/** The explanation must be shorter and easier than the word it explains. */
+export function verifyExplanation(word: string, result: ExplainResult): VerifyOutcome {
+  const violations: string[] = [];
+  const text = result.explanation;
+  const all = words(text);
+
+  if (containsCJK(text)) {
+    violations.push('The explanation contained Chinese, Japanese or Korean characters. Output English only.');
+  }
+  if (all.length === 0) {
+    violations.push('The explanation had no words.');
+  }
+  if (all.length > MAX_EXPLANATION_WORDS) {
+    violations.push('The explanation was ' + all.length + ' words. Keep it under ' + MAX_EXPLANATION_WORDS + '.');
+  }
+
+  const repeated = usesTargetWord(word, text);
+  if (repeated.length > 0) {
+    violations.push('The explanation used the word itself (' + repeated.join(', ') + '). Use different words.');
+  }
+
+  const exempt = properNouns(text);
+  for (const token of lookupStems(word)) exempt.add(token);
+  const hard = hardWords(text, exempt);
+  if (hard.length > MAX_EXPLANATION_HARD_WORDS) {
+    violations.push(
+      'Too many uncommon words (' + hard.join(', ') + '). Use only the 1000 most common English words.',
+    );
+  }
+
+  return { ok: violations.length === 0, violations };
+}
+
+function lookupStems(word: string): string[] {
+  return stems(word.trim().toLowerCase());
 }

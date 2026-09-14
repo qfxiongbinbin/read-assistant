@@ -9,6 +9,8 @@ import {
   SETTINGS_KEY,
   type Accent,
   type CacheEntry,
+  type ExplainCacheEntry,
+  type ExplainResult,
   type Level,
   type PanelMode,
   type Settings,
@@ -16,6 +18,7 @@ import {
 } from './types';
 
 const CACHE_PREFIX = 'ra:c:';
+const EXPLAIN_PREFIX = 'ra:e:';
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const CACHE_LIMIT = 800;
 
@@ -89,13 +92,48 @@ export async function putCached(
   void pruneCache();
 }
 
-async function pruneCache(): Promise<void> {
-  const all = await storageGet<Record<string, CacheEntry>>(null);
+/** Explanations are tiny and heavily reused, so keep more of them around. */
+const EXPLAIN_LIMIT = 1200;
+
+async function prunePrefix(prefix: string, limit: number): Promise<void> {
+  const all = await storageGet<Record<string, { ts?: number }>>(null);
   const entries = Object.keys(all)
-    .filter((key) => key.startsWith(CACHE_PREFIX))
+    .filter((key) => key.startsWith(prefix))
     .map((key) => ({ key, ts: all[key]?.ts ?? 0 }));
-  if (entries.length <= CACHE_LIMIT) return;
+  if (entries.length <= limit) return;
   entries.sort((a, b) => a.ts - b.ts);
-  const doomed = entries.slice(0, entries.length - CACHE_LIMIT).map((entry) => entry.key);
+  const doomed = entries.slice(0, entries.length - limit).map((entry) => entry.key);
   if (doomed.length > 0) await storageRemove(doomed);
+}
+
+function pruneCache(): void {
+  void prunePrefix(CACHE_PREFIX, CACHE_LIMIT);
+  void prunePrefix(EXPLAIN_PREFIX, EXPLAIN_LIMIT);
+}
+
+export function explainKey(word: string, level: Level, model: string): string {
+  const normalized = word.replace(/\s+/g, ' ').trim().toLowerCase();
+  return EXPLAIN_PREFIX + hashKey(SCHEMA_VERSION + '|explain|' + level + '|' + model + '|' + normalized);
+}
+
+export async function getCachedExplain(key: string): Promise<ExplainResult | null> {
+  const stored = await storageGet<Record<string, ExplainCacheEntry>>(key);
+  const entry = stored?.[key];
+  if (!entry) return null;
+  if (Date.now() - entry.ts > CACHE_TTL_MS) {
+    await storageRemove(key);
+    return null;
+  }
+  return entry.result;
+}
+
+export async function putCachedExplain(
+  key: string,
+  result: ExplainResult,
+  level: Level,
+  model: string,
+): Promise<void> {
+  const entry: ExplainCacheEntry = { result, ts: Date.now(), level, model };
+  await storageSet({ [key]: entry });
+  pruneCache();
 }

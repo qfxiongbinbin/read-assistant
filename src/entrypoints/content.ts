@@ -17,6 +17,8 @@ import { injectStyles, PANEL_CLASS } from '../lib/style';
 import {
   SETTINGS_KEY,
   type Accent,
+  type ExplainResponse,
+  type ExplainResult,
   type KeyTerm,
   type Level,
   type PanelMode,
@@ -27,6 +29,7 @@ import {
 } from '../lib/types';
 
 const ACCENT_ORDER: readonly Accent[] = ['uk', 'us'];
+const MAX_DRILL_DEPTH = 12;
 
 interface PanelRefs {
   root: HTMLElement;
@@ -56,6 +59,14 @@ interface OpenPanel {
   cleanup: (() => void)[];
   point: PointerPoint;
   response: SimplifyResponse | null;
+  /** Pronunciation, accumulated as the reader drills down. */
+  ipa: Record<string, PhoneticEntry>;
+  /** Words we already asked the dictionary about, hit or miss. */
+  ipaTried: Set<string>;
+  /** Drill-down stack: [] shows the root view, otherwise the last word is shown. */
+  stack: string[];
+  explains: Map<string, ExplainResult>;
+  errors: Map<string, string>;
 }
 
 const PANELS: OpenPanel[] = [];
@@ -152,11 +163,10 @@ function ipaFor(
   if (!entry) return null;
   const value = accent === 'uk' ? entry.uk || entry.us : entry.us || entry.uk;
   if (!value) return null;
-  const approx = accent === 'uk' ? entry.ukApprox : entry.usApprox;
-  return { value, approx };
+  return { value, approx: accent === 'uk' ? entry.ukApprox : entry.usApprox };
 }
 
-/** \`UK /kæri/ /aʊt/  ·  US /kæri/ /aʊt/\` — empty when any word is unknown. */
+/** `UK /kæri/ /aʊt/  ·  US /kæri/ /aʊt/` — empty when any word is unknown. */
 function phoneticLine(term: string, ipa: Record<string, PhoneticEntry>): string {
   const parts = lookupTokens(term);
   if (parts.length === 0) return '';
@@ -164,12 +174,10 @@ function phoneticLine(term: string, ipa: Record<string, PhoneticEntry>): string 
   for (const accent of ACCENT_ORDER) {
     const values = parts.map((part) => ipaFor(part, ipa, accent));
     if (values.some((value) => value === null)) continue;
-    const rendered = values
-      .map((value) => (value?.approx ? '\u2248' : '') + value?.value)
-      .join('/ /');
+    const rendered = values.map((value) => (value?.approx ? '≈' : '') + value?.value).join('/ /');
     pieces.push(accent.toUpperCase() + ' /' + rendered + '/');
   }
-  return pieces.join('  \u00b7  ');
+  return pieces.join('  ·  ');
 }
 
 function flashWord(element: HTMLElement): void {
@@ -193,7 +201,7 @@ function appendWord(
     const ruby = document.createElement('ruby');
     ruby.appendChild(document.createTextNode(word));
     const rt = document.createElement('rt');
-    rt.textContent = (found.approx ? '\u2248' : '') + found.value;
+    rt.textContent = (found.approx ? '≈' : '') + found.value;
     ruby.appendChild(rt);
     span.appendChild(ruby);
   } else {
@@ -202,6 +210,7 @@ function appendWord(
   container.appendChild(span);
 }
 
+/** Every word becomes clickable: click drills down, Alt+click speaks it. */
 function renderText(
   container: HTMLElement,
   text: string,
@@ -219,11 +228,31 @@ function renderText(
   }
 }
 
+function playButtons(term: string): HTMLElement {
+  const actions = document.createElement('span');
+  actions.className = PANEL_CLASS + '__entry-actions';
+  for (const accent of ACCENT_ORDER) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = PANEL_CLASS + '__btn';
+    button.textContent = accent.toUpperCase();
+    button.title = 'Play with a ' + (accent === 'uk' ? 'British' : 'American') + ' voice';
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      speak(term, accent);
+    });
+    actions.appendChild(button);
+  }
+  return actions;
+}
+
 function appendSection(
   root: HTMLElement,
   title: string,
   entries: KeyTerm[],
   ipa: Record<string, PhoneticEntry>,
+  accent: Accent,
 ): void {
   if (entries.length === 0) return;
 
@@ -244,25 +273,10 @@ function appendSection(
 
     const term = document.createElement('span');
     term.className = PANEL_CLASS + '__term';
+    term.dataset.raWord = entry.term;
     term.textContent = entry.term;
     head.appendChild(term);
-
-    const actions = document.createElement('span');
-    actions.className = PANEL_CLASS + '__entry-actions';
-    for (const accent of ACCENT_ORDER) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = PANEL_CLASS + '__btn';
-      button.textContent = accent.toUpperCase();
-      button.title = 'Play with a ' + (accent === 'uk' ? 'British' : 'American') + ' voice';
-      button.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        speak(entry.term, accent);
-      });
-      actions.appendChild(button);
-    }
-    head.appendChild(actions);
+    head.appendChild(playButtons(entry.term));
     row.appendChild(head);
 
     const line = phoneticLine(entry.term, ipa);
@@ -275,7 +289,7 @@ function appendSection(
 
     const meaning = document.createElement('p');
     meaning.className = PANEL_CLASS + '__meaning';
-    meaning.textContent = entry.simple;
+    renderText(meaning, entry.simple, ipa, accent, false);
     row.appendChild(meaning);
 
     section.appendChild(row);
@@ -284,44 +298,228 @@ function appendSection(
   root.appendChild(section);
 }
 
-function render(
-  refs: PanelRefs,
-  response: SimplifyResponse,
+function appendHint(container: HTMLElement): void {
+  const hint = document.createElement('p');
+  hint.className = PANEL_CLASS + '__hint';
+  hint.textContent = 'Click a word to go deeper · Alt+click to hear it';
+  container.appendChild(hint);
+}
+
+function contextFor(open: OpenPanel, depth: number): string {
+  const parent = depth > 0 ? open.stack[depth - 1] : null;
+  if (parent) {
+    const entry = open.explains.get(parent);
+    if (entry) return entry.explanation;
+  }
+  return open.response?.ok ? open.response.result.simplified : open.options.text;
+}
+
+async function ensureIpa(open: OpenPanel, candidates: readonly string[]): Promise<void> {
+  const missing = candidates.filter(
+    (word) => word.length > 1 && !(word in open.ipa) && !open.ipaTried.has(word),
+  );
+  if (missing.length === 0) return;
+  for (const word of missing) open.ipaTried.add(word);
+  try {
+    const response = await sendToBackground<PhoneticsResponse>({ type: 'phonetics', words: missing });
+    if (response.ok) Object.assign(open.ipa, response.entries);
+  } catch {
+    // Phonetics are optional: never block on them.
+  }
+}
+
+function renderRootView(open: OpenPanel, accent: Accent, phonetics: boolean): void {
+  const result = open.response?.ok ? open.response.result : null;
+  if (!result) return;
+  open.refs.body.classList.toggle(PANEL_CLASS + '__body--phonetics', phonetics);
+  renderSimplified(open.refs.body, result, open.ipa, accent, phonetics);
+  appendSection(open.refs.body, 'Key words', result.keyWords, open.ipa, accent);
+  appendSection(open.refs.body, 'Key phrases', result.keyPhrases, open.ipa, accent);
+}
+
+function renderSimplified(
+  container: HTMLElement,
+  result: { simplified: string },
   ipa: Record<string, PhoneticEntry>,
   accent: Accent,
   phonetics: boolean,
 ): void {
-  refs.body.textContent = '';
-  refs.body.classList.toggle(PANEL_CLASS + '__body--phonetics', false);
-  for (const stale of [...refs.root.querySelectorAll('.' + PANEL_CLASS + '__section')]) stale.remove();
-
-  if (!response.ok) {
-    refs.label.textContent = 'Not simplified';
-    setHidden(refs.retry, false);
-    const node = document.createElement('p');
-    node.className = PANEL_CLASS + '__status ' + PANEL_CLASS + '__error';
-    node.textContent = response.error;
-    refs.body.appendChild(node);
-    return;
-  }
-
-  refs.label.textContent = 'Simplified';
-  setHidden(refs.retry, true);
-  refs.phonetics.classList.toggle(PANEL_CLASS + '__btn--on', phonetics);
-  refs.body.classList.toggle(PANEL_CLASS + '__body--phonetics', phonetics);
-
-  const paragraphs = response.result.simplified
+  const paragraphs = result.simplified
     .split(/\n{2,}/)
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
   for (const paragraph of paragraphs) {
     const node = document.createElement('p');
     renderText(node, paragraph, ipa, accent, phonetics);
-    refs.body.appendChild(node);
+    container.appendChild(node);
+  }
+}
+
+function renderDrillView(open: OpenPanel, accent: Accent, phonetics: boolean): void {
+  const body = open.refs.body;
+  const word = open.stack[open.stack.length - 1];
+  if (!word) return;
+  body.classList.toggle(PANEL_CLASS + '__body--phonetics', phonetics);
+
+  // Breadcrumb: the whole path, with a way back.
+  const crumb = document.createElement('p');
+  crumb.className = PANEL_CLASS + '__crumb';
+  const back = document.createElement('button');
+  back.type = 'button';
+  back.className = PANEL_CLASS + '__btn';
+  back.textContent = '‹ Back';
+  back.title = 'Back to the previous level';
+  back.dataset.raBack = '1';
+  crumb.appendChild(back);
+
+  const path = document.createElement('span');
+  path.className = PANEL_CLASS + '__crumb-text';
+  open.stack.forEach((item, index) => {
+    if (index > 0) path.appendChild(document.createTextNode(' › '));
+    const step = document.createElement('span');
+    step.textContent = item;
+    if (index === open.stack.length - 1) step.className = PANEL_CLASS + '__crumb-current';
+    path.appendChild(step);
+  });
+  crumb.appendChild(path);
+  body.appendChild(crumb);
+
+  const head = document.createElement('p');
+  head.className = PANEL_CLASS + '__word-head';
+  const headWord = document.createElement('span');
+  headWord.textContent = word;
+  head.appendChild(headWord);
+  head.appendChild(playButtons(word));
+  body.appendChild(head);
+
+  const line = phoneticLine(word, open.ipa);
+  if (line.length > 0) {
+    const phonetic = document.createElement('p');
+    phonetic.className = PANEL_CLASS + '__ipa';
+    phonetic.textContent = line;
+    body.appendChild(phonetic);
   }
 
-  appendSection(refs.root, 'Key words', response.result.keyWords, ipa);
-  appendSection(refs.root, 'Key phrases', response.result.keyPhrases, ipa);
+  const entry = open.explains.get(word);
+  const failure = open.errors.get(word);
+
+  if (entry) {
+    const explain = document.createElement('p');
+    explain.className = PANEL_CLASS + '__explain';
+    renderText(explain, entry.explanation, open.ipa, accent, phonetics);
+    body.appendChild(explain);
+
+    if (entry.synonyms.length > 0) {
+      const synonyms = document.createElement('p');
+      synonyms.className = PANEL_CLASS + '__synonyms';
+      synonyms.appendChild(document.createTextNode('Synonyms: '));
+      entry.synonyms.forEach((synonym, index) => {
+        if (index > 0) synonyms.appendChild(document.createTextNode(', '));
+        renderText(synonyms, synonym, open.ipa, accent, false);
+      });
+      body.appendChild(synonyms);
+    }
+    return;
+  }
+
+  if (failure) {
+    const node = document.createElement('p');
+    node.className = PANEL_CLASS + '__status ' + PANEL_CLASS + '__error';
+    node.textContent = failure;
+    body.appendChild(node);
+
+    const again = document.createElement('button');
+    again.type = 'button';
+    again.className = PANEL_CLASS + '__btn';
+    again.textContent = 'Retry';
+    again.dataset.raRetryWord = word;
+    body.appendChild(again);
+    return;
+  }
+
+  const loading = document.createElement('p');
+  loading.className = PANEL_CLASS + '__status ' + PANEL_CLASS + '__dots';
+  loading.textContent = 'Explaining';
+  body.appendChild(loading);
+}
+
+function renderView(open: OpenPanel): void {
+  const { refs } = open;
+  refs.body.textContent = '';
+  refs.body.classList.remove(PANEL_CLASS + '__body--phonetics');
+
+  const accent = settings?.accent ?? 'uk';
+  const phonetics = settings?.phonetics ?? false;
+  refs.phonetics.classList.toggle(PANEL_CLASS + '__btn--on', phonetics);
+
+  const response = open.response;
+  if (!response || !response.ok) {
+    refs.label.textContent = 'Not simplified';
+    setHidden(refs.retry, false);
+    const node = document.createElement('p');
+    node.className = PANEL_CLASS + '__status ' + PANEL_CLASS + '__error';
+    node.textContent = response ? response.error : 'Something went wrong.';
+    refs.body.appendChild(node);
+    return;
+  }
+
+  setHidden(refs.retry, true);
+  refs.label.textContent = open.stack.length > 0 ? 'Explaining' : 'Simplified';
+
+  if (open.stack.length === 0) {
+    renderRootView(open, accent, phonetics);
+  } else {
+    renderDrillView(open, accent, phonetics);
+  }
+  appendHint(refs.body);
+}
+
+async function loadExplanation(open: OpenPanel, word: string, context: string): Promise<void> {
+  const current = settings;
+  if (!current || open.explains.has(word)) return;
+
+  try {
+    const response = await sendToBackground<ExplainResponse>({
+      type: 'explain',
+      word,
+      context,
+      level: current.level,
+      model: current.model,
+    });
+    if (response.ok) {
+      open.explains.set(word, response.result);
+      open.errors.delete(word);
+    } else {
+      open.errors.set(word, response.error);
+    }
+  } catch (error) {
+    open.errors.set(word, error instanceof Error ? error.message : String(error));
+  }
+
+  const entry = open.explains.get(word);
+  const wanted = new Set<string>([word]);
+  if (entry) {
+    for (const token of lookupTokens(entry.explanation)) wanted.add(token);
+    for (const synonym of entry.synonyms) {
+      for (const token of lookupTokens(synonym)) wanted.add(token);
+    }
+  }
+  await ensureIpa(open, [...wanted]);
+}
+
+async function drillInto(open: OpenPanel, rawWord: string): Promise<void> {
+  const word = rawWord.toLowerCase().trim();
+  if (word.length === 0) return;
+  if (open.stack.length >= MAX_DRILL_DEPTH) return;
+
+  const context = contextFor(open, open.stack.length);
+  open.stack.push(word);
+  renderView(open);
+
+  await loadExplanation(open, word, context);
+
+  if (!PANELS.includes(open)) return;
+  if (open.stack[open.stack.length - 1] === word) renderView(open);
 }
 
 async function openPanel(options: PanelOptions): Promise<void> {
@@ -350,6 +548,11 @@ async function openPanel(options: PanelOptions): Promise<void> {
     cleanup: [],
     point: options.point,
     response: null,
+    ipa: {},
+    ipaTried: new Set<string>(),
+    stack: [],
+    explains: new Map<string, ExplainResult>(),
+    errors: new Map<string, string>(),
   };
   PANELS.push(open);
 
@@ -382,16 +585,45 @@ async function openPanel(options: PanelOptions): Promise<void> {
     event.stopPropagation();
     void togglePhonetics(open);
   });
+
   refs.body.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
-    const wordElement = target?.closest<HTMLElement>('[data-ra-word]');
+    if (!target || typeof target.closest !== 'function') return;
+
+    if (target.closest('[data-ra-back]')) {
+      event.preventDefault();
+      event.stopPropagation();
+      open.stack.pop();
+      renderView(open);
+      return;
+    }
+
+    const retryWord = target.closest<HTMLElement>('[data-ra-retry-word]');
+    if (retryWord?.dataset.raRetryWord) {
+      event.preventDefault();
+      event.stopPropagation();
+      const word = retryWord.dataset.raRetryWord;
+      open.errors.delete(word);
+      renderView(open);
+      void loadExplanation(open, word, contextFor(open, open.stack.length - 1)).then(() => {
+        if (PANELS.includes(open)) renderView(open);
+      });
+      return;
+    }
+
+    const wordElement = target.closest<HTMLElement>('[data-ra-word]');
     if (!wordElement) return;
-    event.preventDefault();
-    event.stopPropagation();
     const word = wordElement.dataset.raWord;
     if (!word) return;
-    flashWord(wordElement);
-    speak(word, settings?.accent ?? 'uk');
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (event.altKey) {
+      flashWord(wordElement);
+      speak(word, settings?.accent ?? 'uk');
+      return;
+    }
+    void drillInto(open, word);
   });
 
   // Float mode: the card trails the cursor, but only while the cursor stays over
@@ -426,7 +658,6 @@ async function openPanel(options: PanelOptions): Promise<void> {
   }
   open.response = response;
 
-  let ipa: Record<string, PhoneticEntry> = {};
   if (response.ok) {
     const wanted = new Set<string>([
       ...response.result.keyWords.flatMap((entry) => lookupTokens(entry.term)),
@@ -435,21 +666,11 @@ async function openPanel(options: PanelOptions): Promise<void> {
     if (current.phonetics) {
       for (const token of lookupTokens(response.result.simplified)) wanted.add(token);
     }
-    if (wanted.size > 0) {
-      try {
-        const phonetics = await sendToBackground<PhoneticsResponse>({
-          type: 'phonetics',
-          words: [...wanted],
-        });
-        if (phonetics.ok) ipa = phonetics.entries;
-      } catch {
-        // Phonetics are optional: never block the panel on them.
-      }
-    }
+    await ensureIpa(open, [...wanted]);
   }
 
   if (!PANELS.includes(open)) return;
-  render(refs, response, ipa, current.accent, current.phonetics);
+  renderView(open);
   // The card grew while loading, so re-clamp it to the viewport.
   placement.moveTo?.(open.point.x, open.point.y);
 }

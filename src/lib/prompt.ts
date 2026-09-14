@@ -52,3 +52,42 @@ export function buildMessages(text: string, level: Level, violations: string[] =
     { role: 'user', content: userPrompt(text, violations) },
   ];
 }
+
+/** One step deeper: explain a single word using only the easiest English. */
+export function explainSystemPrompt(): string {
+  return [
+    'You explain one English word or short phrase to an English learner who is reading in English.',
+    'The learner did not understand the word, so your explanation must be easier than the word itself.',
+    '',
+    'HARD RULES',
+    '1. English only. Never translate. Never output Chinese or any other language.',
+    '2. Use only the 1000 most common English words.',
+    '3. The explanation must be ONE sentence, 4 to 12 words long.',
+    '4. Never use the word being explained, or any form of it, in the explanation.',
+    '5. If the word has several meanings, explain the meaning used in the given sentence.',
+    '6. Add up to 3 synonyms. Prefer simpler or equally common words. Never repeat the word itself.',
+    '',
+    'Return JSON only, with exactly this shape:',
+    '{"explanation": "...", "synonyms": ["...", "..."]}',
+  ].join('\n');
+}
+
+export function buildExplainMessages(
+  word: string,
+  context: string,
+  violations: string[] = [],
+): ChatMessage[] {
+  const clipped = context.replace(/\s+/g, ' ').trim().slice(0, 400);
+  const parts = ['Explain this word: ' + word];
+  if (clipped.length > 0) {
+    parts.push('', 'It appears here:', clipped);
+  }
+  if (violations.length > 0) {
+    parts.push('', 'Your previous attempt was rejected. Fix every problem below and return the full JSON again:');
+    for (const violation of violations) parts.push('- ' + violation);
+  }
+  return [
+    { role: 'system', content: explainSystemPrompt() },
+    { role: 'user', content: parts.join('\n') },
+  ];
+}

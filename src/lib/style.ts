@@ -120,9 +120,37 @@ const CSS = `
 .${PANEL_CLASS}__body p:last-child { margin-bottom: 0; }
 .${PANEL_CLASS}__body--phonetics p { line-height: 2.05; }
 
-.${PANEL_CLASS}__word { cursor: pointer; border-radius: 3px; }
-.${PANEL_CLASS}__word:hover { background: rgba(45, 110, 220, 0.15); }
-.${PANEL_CLASS}__word--speaking { background: #2d6edc; color: #ffffff; }
+.${PANEL_CLASS} [data-ra-word] { cursor: pointer; border-radius: 3px; }
+.${PANEL_CLASS} [data-ra-word]:hover { background: rgba(45, 110, 220, 0.16); }
+.${PANEL_CLASS} .${PANEL_CLASS}__word--speaking { background: #2d6edc !important; color: #ffffff !important; }
+
+/* Drill-down view: word -> simpler explanation -> click again -> deeper. */
+.${PANEL_CLASS}__crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: #5b6b82;
+}
+.${PANEL_CLASS}__crumb-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.${PANEL_CLASS}__crumb-current { color: #2d6edc; font-weight: 700; }
+.${PANEL_CLASS}__word-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+.${PANEL_CLASS}__explain { margin: 6px 0 0; font-size: 14.5px; line-height: 1.75; }
+.${PANEL_CLASS}__synonyms { margin: 6px 0 0; font-size: 13px; line-height: 1.6; color: #5b6b82; }
+.${PANEL_CLASS}__hint { margin: 10px 0 0; font-size: 11px; color: #8a97ab; }
 .${PANEL_CLASS} ruby { ruby-position: over; }
 .${PANEL_CLASS} rt {
   font-size: 10px;

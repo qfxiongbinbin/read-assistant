@@ -4,9 +4,12 @@ import {
   containsCJK,
   hardRatio,
   isKnownWord,
+  parseExplanation,
   parseResult,
   properNouns,
+  usesTargetWord,
   verify,
+  verifyExplanation,
 } from '../src/lib/verify';
 
 const FENCE = String.fromCharCode(96).repeat(3);
@@ -170,6 +173,58 @@ check('prefers samantha for us', pickVoice('us', voices)?.name === 'Samantha');
 check(
   'no exact locale returns null',
   pickVoice('uk', [{ name: 'Amelie', lang: 'fr-FR' }] as unknown as SpeechSynthesisVoice[]) === null,
+);
+
+console.log('drill-down explanations');
+const okExplain = parseExplanation(
+  '{"explanation":"very interesting","synonyms":["intriguing","gripping"]}',
+  'fascinating',
+);
+check('parses the explanation', okExplain?.explanation === 'very interesting');
+check('parses synonyms', okExplain?.synonyms.length === 2);
+check(
+  'drops a synonym equal to the word',
+  parseExplanation('{"explanation":"very big","synonyms":["enormous","huge"]}', 'enormous')?.synonyms.join(',') ===
+    'huge',
+);
+check(
+  'caps synonyms at three',
+  parseExplanation('{"explanation":"a b c","synonyms":["w","x","y","z"]}', 'q')?.synonyms.length === 3,
+);
+check('rejects garbage', parseExplanation('nope', 'q') === null);
+
+check(
+  'accepts a simple explanation',
+  verifyExplanation('fascinating', { explanation: 'very interesting and fun', synonyms: [] }).ok,
+);
+check('detects the word itself', usesTargetWord('enormous', 'it was enormous').join(',') === 'enormous');
+check('detects an inflected form', usesTargetWord('run', 'he runs fast').join(',') === 'runs');
+check(
+  'rejects an explanation that repeats the word',
+  !verifyExplanation('fascinating', { explanation: 'something fascinating to see', synonyms: [] }).ok,
+);
+check(
+  'rejects a non-English explanation',
+  !verifyExplanation('fascinating', { explanation: '\u5f88\u6709\u610f\u601d\u7684', synonyms: [] }).ok,
+);
+const longExplain = verifyExplanation('fascinating', {
+  explanation:
+    'this is a very long explanation that keeps going and going with many many words that are all common and simple and easy to read for anyone at all',
+  synonyms: [],
+});
+check(
+  'rejects an over-long explanation',
+  !longExplain.ok && longExplain.violations.some((v) => v.includes('Keep it under')),
+  longExplain.violations.join(' | '),
+);
+const hardExplain = verifyExplanation('enormous', {
+  explanation: 'of considerable magnitude and prodigious extent',
+  synonyms: [],
+});
+check(
+  'rejects hard words in the explanation',
+  !hardExplain.ok && hardExplain.violations.some((v) => v.includes('uncommon words')),
+  hardExplain.violations.join(' | '),
 );
 
 console.log('');
