@@ -2,6 +2,36 @@
 
 改动 `src/lib/prompt.ts` 时必须在这里追加一条，并注明评测结果。
 
+## v1 — 2026-09-14（当前）
+
+- 文件：`src/lib/prompt.ts`
+- 模型：`deepseek-chat`
+- 结果结构：`SCHEMA_VERSION = 'v2'`（新增 `keyWords` / `keyPhrases`，取代 `glossary`）
+
+### 相对 v0 的变化
+
+1. 新增 EXTRACTION 段：要求抽 3~6 个 `keyWords` 与 1~4 个 `keyPhrases`，都用简单英文解释（不超过 8 词）
+2. 明确"输入是一个长句时，拆成 2~4 个短句"
+3. user prompt 由 `Rewrite this paragraph` 改为 `Rewrite this part`，因为现在也处理选中的句子
+
+### 输出格式
+
+```json
+{"simplified": "...", "keyWords": [{"term": "...", "simple": "..."}], "keyPhrases": [{"term": "...", "simple": "..."}]}
+```
+
+`parseResult` 会做归一化：单词进 `keyWords`，多词进 `keyPhrases`，并兼容旧的 `glossary` 字段。
+
+### 评测基线
+
+`npm run selftest`：26 项通过。
+
+### 待观察
+
+- [ ] 真实网页 20 段人工评估：可懂度、事实保真、是否出现中文
+- [ ] `keyWords` / `keyPhrases` 是否真的"值得学"，有没有抽到 the / and 这类词
+- [ ] 多了一个抽取任务，输出变长，观察平均重试次数与 token 成本
+
 ## v0 — 2026-09-14
 
 - 文件：`src/lib/prompt.ts`

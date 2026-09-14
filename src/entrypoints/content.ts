@@ -3,10 +3,18 @@ import { defineContentScript } from 'wxt/utils/define-content-script';
 import { getSettings } from '../lib/cache';
 import { placePanel, type PanelPlacement, type PointerPoint } from '../lib/position';
 import { blockText, collectBlocks, markBlocks, resolveBlock } from '../lib/segment';
+import {
+  ensureTrigger,
+  hideTrigger,
+  readSelection,
+  showTrigger,
+  type SelectedText,
+} from '../lib/selection';
 import { sendToBackground } from '../lib/storage';
 import { injectStyles, PANEL_CLASS } from '../lib/style';
 import {
   SETTINGS_KEY,
+  type KeyTerm,
   type Level,
   type PanelMode,
   type Settings,
@@ -22,18 +30,23 @@ interface PanelRefs {
 }
 
 interface OpenPanel {
+  /** Source paragraph, or null for a panel opened from a text selection. */
+  block: HTMLElement | null;
   host: HTMLElement;
   refs: PanelRefs;
   mode: PanelMode;
   placement: PanelPlacement;
   cleanup: (() => void)[];
   point: PointerPoint;
+  kind: 'block' | 'selection';
 }
 
-const PANELS = new Map<HTMLElement, OpenPanel>();
+const PANELS: OpenPanel[] = [];
 let settings: Settings | null = null;
 let observer: MutationObserver | null = null;
 let scanTimer: number | null = null;
+let trigger: HTMLButtonElement | null = null;
+let pendingSelection: SelectedText | null = null;
 
 function isActive(): boolean {
   if (!settings || !settings.enabled) return false;
@@ -83,105 +96,133 @@ function buildPanel(level: Level): PanelRefs {
   return { root, label, body, retry, close };
 }
 
-function closePanel(block: HTMLElement): void {
-  const open = PANELS.get(block);
-  if (!open) return;
+function closePanel(open: OpenPanel): void {
   for (const dispose of open.cleanup) dispose();
   open.host.remove();
-  PANELS.delete(block);
-  delete block.dataset.raActive;
+  if (open.block) delete open.block.dataset.raActive;
+  const index = PANELS.indexOf(open);
+  if (index >= 0) PANELS.splice(index, 1);
 }
 
 function closeAll(): void {
-  for (const block of [...PANELS.keys()]) closePanel(block);
+  for (const open of [...PANELS]) closePanel(open);
 }
 
 function closeMode(mode: PanelMode): void {
-  for (const [block, open] of [...PANELS.entries()]) {
-    if (open.mode === mode) closePanel(block);
+  for (const open of [...PANELS]) {
+    if (open.mode === mode) closePanel(open);
   }
+}
+
+function appendSection(root: HTMLElement, title: string, entries: KeyTerm[]): void {
+  if (entries.length === 0) return;
+  const section = document.createElement('div');
+  section.className = PANEL_CLASS + '__section';
+
+  const heading = document.createElement('p');
+  heading.className = PANEL_CLASS + '__section-title';
+  heading.textContent = title;
+  section.appendChild(heading);
+
+  for (const entry of entries) {
+    const row = document.createElement('p');
+    row.className = PANEL_CLASS + '__entry';
+    const term = document.createElement('span');
+    term.className = PANEL_CLASS + '__term';
+    term.textContent = entry.term;
+    row.append(term, document.createTextNode(' \u2014 ' + entry.simple));
+    section.appendChild(row);
+  }
+
+  root.appendChild(section);
 }
 
 function render(refs: PanelRefs, response: SimplifyResponse): void {
   refs.body.textContent = '';
+  for (const stale of [...refs.root.querySelectorAll('.' + PANEL_CLASS + '__section')]) stale.remove();
 
-  if (response.ok) {
-    refs.label.textContent = 'Simplified';
-    refs.retry.hidden = true;
-
-    const paragraphs = response.result.simplified
-      .split(/\n{2,}/)
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0);
-    for (const paragraph of paragraphs) {
-      const node = document.createElement('p');
-      node.textContent = paragraph;
-      refs.body.appendChild(node);
-    }
-
-    if (response.result.glossary.length > 0) {
-      const glossary = document.createElement('div');
-      glossary.className = PANEL_CLASS + '__glossary';
-      for (const entry of response.result.glossary) {
-        const row = document.createElement('p');
-        row.className = PANEL_CLASS + '__glossary-item';
-        const term = document.createElement('span');
-        term.className = PANEL_CLASS + '__term';
-        term.textContent = entry.term;
-        row.append(term, document.createTextNode(' \u2014 ' + entry.simple));
-        glossary.appendChild(row);
-      }
-      refs.root.appendChild(glossary);
-    }
+  if (!response.ok) {
+    refs.label.textContent = 'Not simplified';
+    refs.retry.hidden = false;
+    const node = document.createElement('p');
+    node.className = PANEL_CLASS + '__status ' + PANEL_CLASS + '__error';
+    node.textContent = response.error;
+    refs.body.appendChild(node);
     return;
   }
 
-  refs.label.textContent = 'Not simplified';
-  refs.retry.hidden = false;
-  const node = document.createElement('p');
-  node.className = PANEL_CLASS + '__status ' + PANEL_CLASS + '__error';
-  node.textContent = response.error;
-  refs.body.appendChild(node);
+  refs.label.textContent = 'Simplified';
+  refs.retry.hidden = true;
+
+  const paragraphs = response.result.simplified
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  for (const paragraph of paragraphs) {
+    const node = document.createElement('p');
+    node.textContent = paragraph;
+    refs.body.appendChild(node);
+  }
+
+  appendSection(refs.root, 'Key words', response.result.keyWords);
+  appendSection(refs.root, 'Key phrases', response.result.keyPhrases);
 }
 
-async function toggle(block: HTMLElement, point: PointerPoint): Promise<void> {
-  if (PANELS.has(block)) {
-    closePanel(block);
-    return;
-  }
+async function openPanel(options: {
+  kind: 'block' | 'selection';
+  block: HTMLElement | null;
+  anchor: HTMLElement;
+  text: string;
+  point: PointerPoint;
+}): Promise<void> {
   const current = settings;
   if (!isActive() || !current) return;
+
+  if (options.kind === 'selection') {
+    for (const open of [...PANELS]) {
+      if (open.kind === 'selection') closePanel(open);
+    }
+  }
 
   const mode = current.panelMode;
   if (mode === 'float') closeMode('float');
 
-  const level = current.level;
-  const refs = buildPanel(level);
-  const placement = placePanel(mode, block, refs.root, point);
-  block.dataset.raActive = '1';
+  const refs = buildPanel(current.level);
+  const placement = placePanel(mode, options.anchor, refs.root, options.point);
+  if (options.block) options.block.dataset.raActive = '1';
 
-  const open: OpenPanel = { host: placement.host, refs, mode, placement, cleanup: [], point };
-  PANELS.set(block, open);
+  const open: OpenPanel = {
+    block: options.block,
+    host: placement.host,
+    refs,
+    mode,
+    placement,
+    cleanup: [],
+    point: options.point,
+    kind: options.kind,
+  };
+  PANELS.push(open);
 
   refs.close.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    closePanel(block);
+    closePanel(open);
   });
   refs.retry.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    closePanel(block);
-    void toggle(block, open.point);
+    const point = { ...open.point };
+    closePanel(open);
+    void openPanel({ ...options, point });
   });
 
   // Float mode: the card trails the cursor, but only while the cursor stays over
-  // the source paragraph. Moving towards the card freezes it, so it never runs away.
+  // the source text. Moving towards the card freezes it, so it never runs away.
   if (mode === 'float' && placement.moveTo) {
     const moveTo = placement.moveTo;
     const onMove = (event: MouseEvent): void => {
       const target = event.target;
-      if (target instanceof Node && block.contains(target)) {
+      if (target instanceof Node && options.anchor.contains(target)) {
         open.point = { x: event.clientX, y: event.clientY };
         moveTo(open.point.x, open.point.y);
       }
@@ -194,8 +235,8 @@ async function toggle(block: HTMLElement, point: PointerPoint): Promise<void> {
   try {
     response = await sendToBackground<SimplifyResponse>({
       type: 'simplify',
-      text: blockText(block),
-      level,
+      text: options.text,
+      level: current.level,
       model: current.model,
     });
   } catch (error) {
@@ -206,10 +247,57 @@ async function toggle(block: HTMLElement, point: PointerPoint): Promise<void> {
     };
   }
 
-  if (PANELS.get(block) !== open) return;
+  if (!PANELS.includes(open)) return;
   render(refs, response);
   // The card grew while loading, so re-clamp it to the viewport.
   placement.moveTo?.(open.point.x, open.point.y);
+}
+
+function toggleBlock(block: HTMLElement, point: PointerPoint): void {
+  const existing = PANELS.find((panel) => panel.block === block);
+  if (existing) {
+    closePanel(existing);
+    return;
+  }
+  void openPanel({ kind: 'block', block, anchor: block, text: blockText(block), point });
+}
+
+function clearSelectionTrigger(): void {
+  pendingSelection = null;
+  if (trigger) hideTrigger(trigger);
+}
+
+function refreshSelectionTrigger(): void {
+  if (!isActive()) {
+    clearSelectionTrigger();
+    return;
+  }
+  // Let the browser finish updating the selection first.
+  window.setTimeout(() => {
+    const found = readSelection();
+    if (!found) {
+      clearSelectionTrigger();
+      return;
+    }
+    pendingSelection = found;
+    if (!trigger) return;
+    showTrigger(trigger, found.rect);
+  }, 0);
+}
+
+function onTriggerClick(event: MouseEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  const found = pendingSelection;
+  clearSelectionTrigger();
+  if (!found) return;
+  void openPanel({
+    kind: 'selection',
+    block: null,
+    anchor: found.anchor,
+    text: found.text,
+    point: { x: found.rect.left + found.rect.width / 2, y: found.rect.top },
+  });
 }
 
 function onDocumentClick(event: MouseEvent): void {
@@ -224,9 +312,10 @@ function onDocumentClick(event: MouseEvent): void {
   const block = resolveBlock(target);
   if (!block) {
     closeMode('float');
+    clearSelectionTrigger();
     return;
   }
-  void toggle(block, { x: event.clientX, y: event.clientY });
+  void toggleBlock(block, { x: event.clientX, y: event.clientY });
 }
 
 function scan(): void {
@@ -259,6 +348,7 @@ function startObserver(): void {
 
 function deactivate(): void {
   closeAll();
+  clearSelectionTrigger();
   for (const element of document.querySelectorAll<HTMLElement>('[data-ra-ready="1"]')) {
     delete element.dataset.raReady;
     delete element.dataset.raActive;
@@ -285,9 +375,20 @@ async function applySettings(): Promise<void> {
 async function init(): Promise<void> {
   await applySettings();
 
+  trigger = ensureTrigger(document);
+  trigger.addEventListener('mousedown', (event) => event.preventDefault());
+  trigger.addEventListener('click', onTriggerClick);
+
   document.addEventListener('click', onDocumentClick, true);
+  document.addEventListener('mouseup', refreshSelectionTrigger, true);
+  document.addEventListener('keyup', refreshSelectionTrigger, true);
+  window.addEventListener('scroll', clearSelectionTrigger, true);
+
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeMode('float');
+    if (event.key === 'Escape') {
+      closeMode('float');
+      clearSelectionTrigger();
+    }
   });
 
   browser.storage.onChanged.addListener((changes, areaName) => {

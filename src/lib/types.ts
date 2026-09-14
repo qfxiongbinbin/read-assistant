@@ -7,14 +7,22 @@ export type PanelMode = 'below' | 'side' | 'float';
 
 export const PANEL_MODES: readonly PanelMode[] = ['below', 'side', 'float'];
 
-export interface GlossaryEntry {
+/** Bump when the result shape or the prompt contract changes; invalidates cached results. */
+export const SCHEMA_VERSION = 'v2';
+
+/** A key word or a key phrase, explained in simple English. */
+export interface KeyTerm {
   term: string;
   simple: string;
 }
 
 export interface SimplifyResult {
+  /** The same content, rewritten as short simple English sentences. */
   simplified: string;
-  glossary: GlossaryEntry[];
+  /** Single words worth noticing. */
+  keyWords: KeyTerm[];
+  /** Multi-word chunks worth noticing: collocations, phrasal verbs, fixed expressions. */
+  keyPhrases: KeyTerm[];
 }
 
 export interface Settings {

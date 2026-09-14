@@ -1,4 +1,5 @@
 export const PANEL_CLASS = 'readassistant-panel';
+export const TRIGGER_CLASS = 'readassistant-trigger';
 const STYLE_ID = 'readassistant-style';
 
 const CSS = `
@@ -14,6 +15,23 @@ const CSS = `
   box-shadow: inset 3px 0 0 0 rgba(45, 110, 220, 0.9);
 }
 
+/* Small pill that appears after the reader selects a sentence. */
+.${TRIGGER_CLASS} {
+  position: fixed;
+  z-index: 2147483601;
+  padding: 5px 11px;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #2d6edc;
+  color: #ffffff;
+  font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(16, 30, 54, 0.26);
+}
+.${TRIGGER_CLASS}:hover { background: #1f5bc4; }
+
 .${PANEL_CLASS} {
   margin: 8px 0 16px;
   padding: 10px 12px 10px 14px;
@@ -25,12 +43,6 @@ const CSS = `
   text-align: left;
   letter-spacing: normal;
   text-transform: none;
-}
-.${PANEL_CLASS}--plain {
-  margin: 0;
-  border-left: 0;
-  background: none;
-  padding: 0;
 }
 
 /* Detached cards: they must not reflow the page and must stay legible on any site. */
@@ -90,14 +102,20 @@ const CSS = `
 .${PANEL_CLASS}__btn:hover { background: rgba(45, 110, 220, 0.12); color: #2d6edc; }
 .${PANEL_CLASS}__body p { margin: 0 0 8px; }
 .${PANEL_CLASS}__body p:last-child { margin-bottom: 0; }
-.${PANEL_CLASS}__glossary {
+.${PANEL_CLASS}__section {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid rgba(45, 110, 220, 0.18);
-  font-size: 13.5px;
-  line-height: 1.55;
 }
-.${PANEL_CLASS}__glossary-item { margin: 0 0 4px; }
+.${PANEL_CLASS}__section-title {
+  margin: 0 0 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #5b6b82;
+}
+.${PANEL_CLASS}__entry { margin: 0 0 4px; font-size: 13.5px; line-height: 1.55; }
 .${PANEL_CLASS}__term { font-weight: 600; color: #2d6edc; }
 .${PANEL_CLASS}__status { color: #5b6b82; font-size: 13.5px; }
 .${PANEL_CLASS}__error { color: #b3261e; }

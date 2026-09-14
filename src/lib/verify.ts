@@ -1,9 +1,11 @@
 import { inFreqList } from '../data/enFreq';
-import type { GlossaryEntry, SimplifyResult } from './types';
+import type { KeyTerm, SimplifyResult } from './types';
 
 export const HARD_WORD_LIMIT = 0.1;
 export const AVG_SENTENCE_WORD_LIMIT = 16;
 export const MAX_SENTENCE_WORD_LIMIT = 25;
+export const MAX_KEY_WORDS = 8;
+export const MAX_KEY_PHRASES = 6;
 
 export interface VerifyOutcome {
   ok: boolean;
@@ -25,6 +27,10 @@ export function words(text: string): string[] {
 
 export function sentences(text: string): string[] {
   return (text.match(SENTENCE_SPLIT) ?? []).map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+export function isMultiWord(term: string): boolean {
+  return /\s/.test(term.trim());
 }
 
 export function stems(word: string): string[] {
@@ -84,31 +90,70 @@ export function missingNumbers(original: string, simplified: string): string[] {
   return [...missing];
 }
 
+function readTerms(value: unknown): KeyTerm[] {
+  if (!Array.isArray(value)) return [];
+  const out: KeyTerm[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    const term = typeof record.term === 'string' ? record.term.trim() : '';
+    const simple = typeof record.simple === 'string' ? record.simple.trim() : '';
+    if (term.length > 0 && simple.length > 0) out.push({ term, simple });
+  }
+  return out;
+}
+
+function dedupe(terms: KeyTerm[], limit: number): KeyTerm[] {
+  const seen = new Set<string>();
+  const out: KeyTerm[] = [];
+  for (const item of terms) {
+    const key = item.term.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * Accepted shapes:
+ * - current: { simplified, keyWords, keyPhrases }
+ * - legacy / model drift: { simplified, glossary }
+ * Single-word entries always land in keyWords, multi-word entries in keyPhrases.
+ */
 export function parseResult(raw: string): SimplifyResult | null {
-  let text = raw.trim();
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
   if (start === -1 || end <= start) return null;
-  text = text.slice(start, end + 1);
+
+  let parsed: Record<string, unknown>;
   try {
-    const parsed = JSON.parse(text) as Record<string, unknown>;
-    const simplified = typeof parsed.simplified === 'string' ? parsed.simplified.trim() : '';
-    if (!simplified) return null;
-    const rawGlossary = Array.isArray(parsed.glossary) ? parsed.glossary : [];
-    const glossary: GlossaryEntry[] = rawGlossary
-      .filter(
-        (g): g is { term: string; simple: string } =>
-          !!g &&
-          typeof (g as Record<string, unknown>).term === 'string' &&
-          typeof (g as Record<string, unknown>).simple === 'string',
-      )
-      .slice(0, 8)
-      .map((g) => ({ term: g.term.trim(), simple: g.simple.trim() }))
-      .filter((g) => g.term.length > 0 && g.simple.length > 0);
-    return { simplified, glossary };
+    parsed = JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
   } catch {
     return null;
   }
+
+  const simplified = typeof parsed.simplified === 'string' ? parsed.simplified.trim() : '';
+  if (!simplified) return null;
+
+  const singleWords: KeyTerm[] = [];
+  const phrases: KeyTerm[] = [];
+  const all = [
+    ...readTerms(parsed.keyWords),
+    ...readTerms(parsed.glossary),
+    ...readTerms(parsed.keyPhrases),
+  ];
+  for (const item of all) {
+    if (isMultiWord(item.term)) phrases.push(item);
+    else singleWords.push(item);
+  }
+
+  return {
+    simplified,
+    keyWords: dedupe(singleWords, MAX_KEY_WORDS),
+    keyPhrases: dedupe(phrases, MAX_KEY_PHRASES),
+  };
 }
 
 export function verify(original: string, result: SimplifyResult): VerifyOutcome {
@@ -123,6 +168,9 @@ export function verify(original: string, result: SimplifyResult): VerifyOutcome 
   }
   if (sents.length === 0) {
     violations.push('The output had no complete sentences.');
+  }
+  if (result.keyWords.length === 0) {
+    violations.push('No key words were extracted. Pick 3 to 6 single words from the input.');
   }
 
   const average = sents.length > 0 ? all.length / sents.length : all.length;
@@ -142,7 +190,7 @@ export function verify(original: string, result: SimplifyResult): VerifyOutcome 
   }
 
   const exempt = properNouns(original);
-  for (const entry of result.glossary) exempt.add(entry.term.toLowerCase());
+  for (const entry of [...result.keyWords, ...result.keyPhrases]) exempt.add(entry.term.toLowerCase());
   const ratio = hardRatio(text, exempt);
   if (ratio > HARD_WORD_LIMIT) {
     violations.push(

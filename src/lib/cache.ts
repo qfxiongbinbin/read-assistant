@@ -4,6 +4,7 @@ import {
   DEFAULT_SETTINGS,
   LEVELS,
   PANEL_MODES,
+  SCHEMA_VERSION,
   SETTINGS_KEY,
   type CacheEntry,
   type Level,
@@ -22,12 +23,8 @@ export function normalizeText(text: string): string {
 
 export function cacheKey(text: string, level: Level, model: string): string {
   const normalized = normalizeText(text);
-  return (
-    CACHE_PREFIX +
-    hashKey(level + '|' + model + '|' + normalized) +
-    '-' +
-    normalized.length.toString(36)
-  );
+  const seed = SCHEMA_VERSION + '|' + level + '|' + model + '|' + normalized;
+  return CACHE_PREFIX + hashKey(seed) + '-' + normalized.length.toString(36);
 }
 
 function asLevel(value: unknown): Level {
