@@ -1,11 +1,13 @@
 import { hashKey } from './hash';
 import { storageGet, storageSet, storageRemove } from './storage';
 import {
+  ACCENTS,
   DEFAULT_SETTINGS,
   LEVELS,
   PANEL_MODES,
   SCHEMA_VERSION,
   SETTINGS_KEY,
+  type Accent,
   type CacheEntry,
   type Level,
   type PanelMode,
@@ -35,6 +37,10 @@ function asPanelMode(value: unknown): PanelMode {
   return PANEL_MODES.includes(value as PanelMode) ? (value as PanelMode) : DEFAULT_SETTINGS.panelMode;
 }
 
+function asAccent(value: unknown): Accent {
+  return ACCENTS.includes(value as Accent) ? (value as Accent) : DEFAULT_SETTINGS.accent;
+}
+
 export async function getSettings(): Promise<Settings> {
   const stored = await storageGet<Record<string, unknown>>(SETTINGS_KEY);
   const value = stored?.[SETTINGS_KEY] as Partial<Settings> | undefined;
@@ -44,6 +50,8 @@ export async function getSettings(): Promise<Settings> {
     ...value,
     level: asLevel(value.level),
     panelMode: asPanelMode(value.panelMode),
+    accent: asAccent(value.accent),
+    phonetics: typeof value.phonetics === 'boolean' ? value.phonetics : DEFAULT_SETTINGS.phonetics,
     disabledHosts: Array.isArray(value.disabledHosts) ? value.disabledHosts : [],
   };
 }

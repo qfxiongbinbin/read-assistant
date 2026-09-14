@@ -1,3 +1,5 @@
+import { lookupTokens, lookupWords, parseTsv, variants } from '../src/lib/ipa';
+import { pickVoice } from '../src/lib/speech';
 import {
   containsCJK,
   hardRatio,
@@ -135,6 +137,40 @@ const notSimpler = verify('The group started a full check and found the cause.',
   keyPhrases: [],
 });
 check('rejects harder output', !notSimpler.ok);
+
+console.log('ipa');
+const table = parseTsv(
+  'cat\tkæt\tkæt\ncolour\tkʌlə\t\ncolor\t\tkʌlɚ\nbanana\tbəˈnɑːnə\t\norange\t\tˈɔɹɪndʒ\n',
+);
+check('parses rows', table.size === 5);
+const cat = lookupWords(table, ['cat']).cat;
+check('exact match both accents', cat?.uk === 'kæt' && cat?.us === 'kæt' && !cat?.ukApprox && !cat?.usApprox);
+const color = lookupWords(table, ['color']).color;
+check('us spelling finds uk via variant', color?.uk === 'kʌlə' && !color.ukApprox);
+check('us side stays exact', color?.us === 'kʌlɚ' && !color.usApprox);
+const colour = lookupWords(table, ['colour']).colour;
+check('uk spelling finds us via variant', colour?.us === 'kʌlɚ' && !colour.usApprox);
+const banana = lookupWords(table, ['banana']).banana;
+check('borrows uk from us', banana?.us === 'bəˈnɑːnə' && banana.usApprox);
+const orange = lookupWords(table, ['orange']).orange;
+check('borrows us from uk', orange?.uk === 'ˈɔɹɪndʒ' && orange.ukApprox);
+check('unknown word is omitted', !('zzz' in lookupWords(table, ['zzz'])));
+check('lowercases input', lookupWords(table, ['CAT']).cat?.uk === 'kæt');
+check('organization gets a uk variant', variants('organization', 'uk').includes('organisation'));
+check('tokens ignore punctuation', lookupTokens('Hello, world!').join(',') === 'hello,world');
+
+console.log('voice picking');
+const voices = [
+  { name: 'Samantha', lang: 'en-US' },
+  { name: 'Google US English', lang: 'en-US' },
+  { name: 'Daniel', lang: 'en-GB' },
+] as unknown as SpeechSynthesisVoice[];
+check('picks a british voice', pickVoice('uk', voices)?.name === 'Daniel');
+check('prefers samantha for us', pickVoice('us', voices)?.name === 'Samantha');
+check(
+  'no exact locale returns null',
+  pickVoice('uk', [{ name: 'Amelie', lang: 'fr-FR' }] as unknown as SpeechSynthesisVoice[]) === null,
+);
 
 console.log('');
 console.log(failed === 0 ? 'SELFTEST PASS' : 'SELFTEST FAIL (' + failed + ')');

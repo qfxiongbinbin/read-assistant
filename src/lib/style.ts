@@ -69,8 +69,9 @@ const CSS = `
 
 .${PANEL_CLASS}__meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-bottom: 6px;
   font-size: 11px;
   line-height: 1;
@@ -91,32 +92,66 @@ const CSS = `
 .${PANEL_CLASS}__btn {
   border: 0;
   background: none;
-  padding: 2px 4px;
+  padding: 2px 5px;
   margin: 0;
-  font-size: 12px;
-  line-height: 1;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0.03em;
   color: #5b6b82;
   cursor: pointer;
   border-radius: 4px;
 }
 .${PANEL_CLASS}__btn:hover { background: rgba(45, 110, 220, 0.12); color: #2d6edc; }
+.${PANEL_CLASS}__btn--on { background: rgba(45, 110, 220, 0.16); color: #2d6edc; }
+
 .${PANEL_CLASS}__body p { margin: 0 0 8px; }
 .${PANEL_CLASS}__body p:last-child { margin-bottom: 0; }
+.${PANEL_CLASS}__body--phonetics p { line-height: 2.05; }
+
+.${PANEL_CLASS}__word { cursor: pointer; border-radius: 3px; }
+.${PANEL_CLASS}__word:hover { background: rgba(45, 110, 220, 0.15); }
+.${PANEL_CLASS}__word--speaking { background: #2d6edc; color: #ffffff; }
+.${PANEL_CLASS} ruby { ruby-position: over; }
+.${PANEL_CLASS} rt {
+  font-size: 10px;
+  line-height: 1.15;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: #6b7a91;
+}
+
 .${PANEL_CLASS}__section {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid rgba(45, 110, 220, 0.18);
 }
 .${PANEL_CLASS}__section-title {
-  margin: 0 0 5px;
+  margin: 0 0 6px;
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #5b6b82;
 }
-.${PANEL_CLASS}__entry { margin: 0 0 4px; font-size: 13.5px; line-height: 1.55; }
+.${PANEL_CLASS}__entry { margin: 0 0 9px; }
+.${PANEL_CLASS}__entry:last-child { margin-bottom: 0; }
+.${PANEL_CLASS}__entry-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 14px;
+}
 .${PANEL_CLASS}__term { font-weight: 600; color: #2d6edc; }
+.${PANEL_CLASS}__entry-actions { margin-left: auto; display: flex; gap: 2px; }
+.${PANEL_CLASS}__ipa {
+  margin: 2px 0 0;
+  font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #5b6b82;
+}
+.${PANEL_CLASS}__meaning { margin: 2px 0 0; font-size: 13.5px; line-height: 1.5; }
+
 .${PANEL_CLASS}__status { color: #5b6b82; font-size: 13.5px; }
 .${PANEL_CLASS}__error { color: #b3261e; }
 .${PANEL_CLASS}__dots::after {

@@ -11,7 +11,8 @@
     "prepare": "wxt prepare",
     "compile": "wxt prepare && tsc --noEmit",
     "selftest": "esbuild scripts/selftest.ts --bundle --platform=node --format=esm --outfile=tmp/selftest.mjs --log-level=warning && node tmp/selftest.mjs",
-    "gen:freq": "node scripts/gen-freq.mjs"
+    "gen:freq": "node scripts/gen-freq.mjs",
+    "gen:ipa": "node scripts/gen-ipa.mjs"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

@@ -7,6 +7,15 @@ export type PanelMode = 'below' | 'side' | 'float';
 
 export const PANEL_MODES: readonly PanelMode[] = ['below', 'side', 'float'];
 
+/** Pronunciation variant. */
+export type Accent = 'uk' | 'us';
+
+export const ACCENTS: readonly Accent[] = ['uk', 'us'];
+
+export const ACCENT_LOCALE: Record<Accent, string> = { uk: 'en-GB', us: 'en-US' };
+
+export const ACCENT_LABEL: Record<Accent, string> = { uk: 'British', us: 'American' };
+
 /** Bump when the result shape or the prompt contract changes; invalidates cached results. */
 export const SCHEMA_VERSION = 'v2';
 
@@ -25,10 +34,21 @@ export interface SimplifyResult {
   keyPhrases: KeyTerm[];
 }
 
+export interface PhoneticEntry {
+  uk: string;
+  us: string;
+  /** The British transcription was borrowed from the American one. */
+  ukApprox: boolean;
+  /** The American transcription was borrowed from the British one. */
+  usApprox: boolean;
+}
+
 export interface Settings {
   enabled: boolean;
   level: Level;
   panelMode: PanelMode;
+  accent: Accent;
+  phonetics: boolean;
   model: string;
   apiKey: string;
   disabledHosts: string[];
@@ -38,6 +58,8 @@ export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
   level: 'B1',
   panelMode: 'below',
+  accent: 'uk',
+  phonetics: true,
   model: 'deepseek-chat',
   apiKey: '',
   disabledHosts: [],
@@ -57,7 +79,14 @@ export type SimplifyResponse =
   | { ok: false; error: string; attempts: number };
 
 export type GetSettingsRequest = { type: 'getSettings' };
-export type RuntimeMessage = SimplifyRequest | GetSettingsRequest;
+
+export type PhoneticsRequest = { type: 'phonetics'; words: string[] };
+
+export type PhoneticsResponse =
+  | { ok: true; entries: Record<string, PhoneticEntry> }
+  | { ok: false; error: string };
+
+export type RuntimeMessage = SimplifyRequest | GetSettingsRequest | PhoneticsRequest;
 
 export interface CacheEntry {
   result: SimplifyResult;

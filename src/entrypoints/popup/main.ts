@@ -1,6 +1,6 @@
 import { getSettings, saveSettings } from '../../lib/cache';
 import { queryActiveTab } from '../../lib/storage';
-import type { Level, PanelMode, Settings } from '../../lib/types';
+import type { Accent, Level, PanelMode, Settings } from '../../lib/types';
 
 function element<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -11,6 +11,8 @@ function element<T extends HTMLElement>(id: string): T {
 const enabledInput = element<HTMLInputElement>('enabled');
 const levelSelect = element<HTMLSelectElement>('level');
 const panelModeSelect = element<HTMLSelectElement>('panelMode');
+const accentSelect = element<HTMLSelectElement>('accent');
+const phoneticsInput = element<HTMLInputElement>('phonetics');
 const modelSelect = element<HTMLSelectElement>('model');
 const apiKeyInput = element<HTMLInputElement>('apiKey');
 const siteOffInput = element<HTMLInputElement>('siteOff');
@@ -38,6 +40,8 @@ async function boot(): Promise<void> {
   enabledInput.checked = settings.enabled;
   levelSelect.value = settings.level;
   panelModeSelect.value = settings.panelMode;
+  accentSelect.value = settings.accent;
+  phoneticsInput.checked = settings.phonetics;
   modelSelect.value = settings.model;
   apiKeyInput.value = settings.apiKey;
 
@@ -60,6 +64,8 @@ saveButton.addEventListener('click', () => {
         enabled: enabledInput.checked,
         level: levelSelect.value as Level,
         panelMode: panelModeSelect.value as PanelMode,
+        accent: accentSelect.value as Accent,
+        phonetics: phoneticsInput.checked,
         model: modelSelect.value,
         apiKey: apiKeyInput.value.trim(),
         disabledHosts: [...disabledHosts],

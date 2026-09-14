@@ -2,9 +2,16 @@ import { browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
 import { cacheKey, getCached, getSettings, normalizeText, putCached } from '../lib/cache';
 import { chatJson } from '../lib/llm';
+import { lookup } from '../lib/phonetics';
 import { ALLOWED_MODELS, buildMessages } from '../lib/prompt';
 import { parseResult, verify } from '../lib/verify';
-import type { RuntimeMessage, SimplifyRequest, SimplifyResponse } from '../lib/types';
+import type {
+  PhoneticsRequest,
+  PhoneticsResponse,
+  RuntimeMessage,
+  SimplifyRequest,
+  SimplifyResponse,
+} from '../lib/types';
 
 const MAX_ATTEMPTS = 3;
 
@@ -69,6 +76,15 @@ async function handleSimplify(request: SimplifyRequest): Promise<SimplifyRespons
   };
 }
 
+async function handlePhonetics(request: PhoneticsRequest): Promise<PhoneticsResponse> {
+  try {
+    const entries = await lookup(Array.isArray(request.words) ? request.words.slice(0, 400) : []);
+    return { ok: true, entries };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const request = message as RuntimeMessage;
@@ -84,6 +100,11 @@ export default defineBackground(() => {
             attempts: 0,
           } satisfies SimplifyResponse),
       );
+      return true;
+    }
+
+    if (request.type === 'phonetics') {
+      void handlePhonetics(request).then((response) => sendResponse(response));
       return true;
     }
 

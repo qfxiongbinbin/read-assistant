@@ -1,6 +1,7 @@
 import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
-import { getSettings } from '../lib/cache';
+import { getSettings, saveSettings } from '../lib/cache';
+import { lookupTokens } from '../lib/ipa';
 import { placePanel, type PanelPlacement, type PointerPoint } from '../lib/position';
 import { blockText, collectBlocks, markBlocks, resolveBlock } from '../lib/segment';
 import {
@@ -10,35 +11,51 @@ import {
   showTrigger,
   type SelectedText,
 } from '../lib/selection';
+import { initSpeech, speak, stopSpeaking } from '../lib/speech';
 import { sendToBackground } from '../lib/storage';
 import { injectStyles, PANEL_CLASS } from '../lib/style';
 import {
   SETTINGS_KEY,
+  type Accent,
   type KeyTerm,
   type Level,
   type PanelMode,
+  type PhoneticEntry,
+  type PhoneticsResponse,
   type Settings,
   type SimplifyResponse,
 } from '../lib/types';
+
+const ACCENT_ORDER: readonly Accent[] = ['uk', 'us'];
 
 interface PanelRefs {
   root: HTMLElement;
   label: HTMLElement;
   body: HTMLElement;
+  playUk: HTMLButtonElement;
+  playUs: HTMLButtonElement;
+  phonetics: HTMLButtonElement;
   retry: HTMLButtonElement;
   close: HTMLButtonElement;
 }
 
-interface OpenPanel {
-  /** Source paragraph, or null for a panel opened from a text selection. */
+interface PanelOptions {
+  kind: 'block' | 'selection';
   block: HTMLElement | null;
+  anchor: HTMLElement;
+  text: string;
+  point: PointerPoint;
+}
+
+interface OpenPanel {
+  options: PanelOptions;
   host: HTMLElement;
   refs: PanelRefs;
   mode: PanelMode;
   placement: PanelPlacement;
   cleanup: (() => void)[];
   point: PointerPoint;
-  kind: 'block' | 'selection';
+  response: SimplifyResponse | null;
 }
 
 const PANELS: OpenPanel[] = [];
@@ -71,19 +88,25 @@ function buildPanel(level: Level): PanelRefs {
   const spacer = document.createElement('span');
   spacer.className = PANEL_CLASS + '__spacer';
 
-  const retry = document.createElement('button');
-  retry.type = 'button';
-  retry.className = PANEL_CLASS + '__btn';
-  retry.textContent = 'Retry';
+  const makeButton = (text: string, title: string): HTMLButtonElement => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = PANEL_CLASS + '__btn';
+    button.textContent = text;
+    button.title = title;
+    return button;
+  };
+
+  const playUk = makeButton('UK', 'Read the whole text with a British voice');
+  const playUs = makeButton('US', 'Read the whole text with an American voice');
+  const phonetics = makeButton('Aa', 'Show phonetics above every word');
+
+  const retry = makeButton('Retry', 'Try again');
   retry.hidden = true;
 
-  const close = document.createElement('button');
-  close.type = 'button';
-  close.className = PANEL_CLASS + '__btn';
-  close.textContent = '\u2715';
-  close.title = 'Hide';
+  const close = makeButton('\\u2715', 'Hide');
 
-  meta.append(badge, label, spacer, retry, close);
+  meta.append(badge, label, spacer, playUk, playUs, phonetics, retry, close);
 
   const body = document.createElement('div');
   body.className = PANEL_CLASS + '__body';
@@ -93,13 +116,13 @@ function buildPanel(level: Level): PanelRefs {
   body.appendChild(status);
 
   root.append(meta, body);
-  return { root, label, body, retry, close };
+  return { root, label, body, playUk, playUs, phonetics, retry, close };
 }
 
 function closePanel(open: OpenPanel): void {
   for (const dispose of open.cleanup) dispose();
   open.host.remove();
-  if (open.block) delete open.block.dataset.raActive;
+  if (open.options.block) delete open.options.block.dataset.raActive;
   const index = PANELS.indexOf(open);
   if (index >= 0) PANELS.splice(index, 1);
 }
@@ -114,8 +137,90 @@ function closeMode(mode: PanelMode): void {
   }
 }
 
-function appendSection(root: HTMLElement, title: string, entries: KeyTerm[]): void {
+function ipaFor(
+  word: string,
+  ipa: Record<string, PhoneticEntry>,
+  accent: Accent,
+): { value: string; approx: boolean } | null {
+  const entry = ipa[word.toLowerCase()];
+  if (!entry) return null;
+  const value = accent === 'uk' ? entry.uk || entry.us : entry.us || entry.uk;
+  if (!value) return null;
+  const approx = accent === 'uk' ? entry.ukApprox : entry.usApprox;
+  return { value, approx };
+}
+
+/** \`UK /kæri/ /aʊt/  ·  US /kæri/ /aʊt/\` — empty when any word is unknown. */
+function phoneticLine(term: string, ipa: Record<string, PhoneticEntry>): string {
+  const parts = lookupTokens(term);
+  if (parts.length === 0) return '';
+  const pieces: string[] = [];
+  for (const accent of ACCENT_ORDER) {
+    const values = parts.map((part) => ipaFor(part, ipa, accent));
+    if (values.some((value) => value === null)) continue;
+    const rendered = values
+      .map((value) => (value?.approx ? '\u2248' : '') + value?.value)
+      .join('/ /');
+    pieces.push(accent.toUpperCase() + ' /' + rendered + '/');
+  }
+  return pieces.join('  \u00b7  ');
+}
+
+function flashWord(element: HTMLElement): void {
+  element.classList.add(PANEL_CLASS + '__word--speaking');
+  window.setTimeout(() => element.classList.remove(PANEL_CLASS + '__word--speaking'), 450);
+}
+
+function appendWord(
+  container: HTMLElement,
+  word: string,
+  ipa: Record<string, PhoneticEntry>,
+  accent: Accent,
+  phonetics: boolean,
+): void {
+  const span = document.createElement('span');
+  span.className = PANEL_CLASS + '__word';
+  span.dataset.raWord = word;
+
+  const found = phonetics ? ipaFor(word, ipa, accent) : null;
+  if (found) {
+    const ruby = document.createElement('ruby');
+    ruby.appendChild(document.createTextNode(word));
+    const rt = document.createElement('rt');
+    rt.textContent = (found.approx ? '\u2248' : '') + found.value;
+    ruby.appendChild(rt);
+    span.appendChild(ruby);
+  } else {
+    span.textContent = word;
+  }
+  container.appendChild(span);
+}
+
+function renderText(
+  container: HTMLElement,
+  text: string,
+  ipa: Record<string, PhoneticEntry>,
+  accent: Accent,
+  phonetics: boolean,
+): void {
+  for (const part of text.split(/([A-Za-z][A-Za-z'-]*)/)) {
+    if (part.length === 0) continue;
+    if (!/^[A-Za-z]/.test(part)) {
+      container.appendChild(document.createTextNode(part));
+      continue;
+    }
+    appendWord(container, part, ipa, accent, phonetics);
+  }
+}
+
+function appendSection(
+  root: HTMLElement,
+  title: string,
+  entries: KeyTerm[],
+  ipa: Record<string, PhoneticEntry>,
+): void {
   if (entries.length === 0) return;
+
   const section = document.createElement('div');
   section.className = PANEL_CLASS + '__section';
 
@@ -125,20 +230,63 @@ function appendSection(root: HTMLElement, title: string, entries: KeyTerm[]): vo
   section.appendChild(heading);
 
   for (const entry of entries) {
-    const row = document.createElement('p');
+    const row = document.createElement('div');
     row.className = PANEL_CLASS + '__entry';
+
+    const head = document.createElement('p');
+    head.className = PANEL_CLASS + '__entry-head';
+
     const term = document.createElement('span');
     term.className = PANEL_CLASS + '__term';
     term.textContent = entry.term;
-    row.append(term, document.createTextNode(' \u2014 ' + entry.simple));
+    head.appendChild(term);
+
+    const actions = document.createElement('span');
+    actions.className = PANEL_CLASS + '__entry-actions';
+    for (const accent of ACCENT_ORDER) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = PANEL_CLASS + '__btn';
+      button.textContent = accent.toUpperCase();
+      button.title = 'Play with a ' + (accent === 'uk' ? 'British' : 'American') + ' voice';
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        speak(entry.term, accent);
+      });
+      actions.appendChild(button);
+    }
+    head.appendChild(actions);
+    row.appendChild(head);
+
+    const line = phoneticLine(entry.term, ipa);
+    if (line.length > 0) {
+      const phonetic = document.createElement('p');
+      phonetic.className = PANEL_CLASS + '__ipa';
+      phonetic.textContent = line;
+      row.appendChild(phonetic);
+    }
+
+    const meaning = document.createElement('p');
+    meaning.className = PANEL_CLASS + '__meaning';
+    meaning.textContent = entry.simple;
+    row.appendChild(meaning);
+
     section.appendChild(row);
   }
 
   root.appendChild(section);
 }
 
-function render(refs: PanelRefs, response: SimplifyResponse): void {
+function render(
+  refs: PanelRefs,
+  response: SimplifyResponse,
+  ipa: Record<string, PhoneticEntry>,
+  accent: Accent,
+  phonetics: boolean,
+): void {
   refs.body.textContent = '';
+  refs.body.classList.toggle(PANEL_CLASS + '__body--phonetics', false);
   for (const stale of [...refs.root.querySelectorAll('.' + PANEL_CLASS + '__section')]) stale.remove();
 
   if (!response.ok) {
@@ -153,6 +301,8 @@ function render(refs: PanelRefs, response: SimplifyResponse): void {
 
   refs.label.textContent = 'Simplified';
   refs.retry.hidden = true;
+  refs.phonetics.classList.toggle(PANEL_CLASS + '__btn--on', phonetics);
+  refs.body.classList.toggle(PANEL_CLASS + '__body--phonetics', phonetics);
 
   const paragraphs = response.result.simplified
     .split(/\n{2,}/)
@@ -160,27 +310,21 @@ function render(refs: PanelRefs, response: SimplifyResponse): void {
     .filter((part) => part.length > 0);
   for (const paragraph of paragraphs) {
     const node = document.createElement('p');
-    node.textContent = paragraph;
+    renderText(node, paragraph, ipa, accent, phonetics);
     refs.body.appendChild(node);
   }
 
-  appendSection(refs.root, 'Key words', response.result.keyWords);
-  appendSection(refs.root, 'Key phrases', response.result.keyPhrases);
+  appendSection(refs.root, 'Key words', response.result.keyWords, ipa);
+  appendSection(refs.root, 'Key phrases', response.result.keyPhrases, ipa);
 }
 
-async function openPanel(options: {
-  kind: 'block' | 'selection';
-  block: HTMLElement | null;
-  anchor: HTMLElement;
-  text: string;
-  point: PointerPoint;
-}): Promise<void> {
+async function openPanel(options: PanelOptions): Promise<void> {
   const current = settings;
   if (!isActive() || !current) return;
 
   if (options.kind === 'selection') {
     for (const open of [...PANELS]) {
-      if (open.kind === 'selection') closePanel(open);
+      if (open.options.kind === 'selection') closePanel(open);
     }
   }
 
@@ -192,14 +336,14 @@ async function openPanel(options: {
   if (options.block) options.block.dataset.raActive = '1';
 
   const open: OpenPanel = {
-    block: options.block,
+    options,
     host: placement.host,
     refs,
     mode,
     placement,
     cleanup: [],
     point: options.point,
-    kind: options.kind,
+    response: null,
   };
   PANELS.push(open);
 
@@ -214,6 +358,34 @@ async function openPanel(options: {
     const point = { ...open.point };
     closePanel(open);
     void openPanel({ ...options, point });
+  });
+  refs.playUk.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const response = open.response;
+    if (response?.ok) speak(response.result.simplified, 'uk');
+  });
+  refs.playUs.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const response = open.response;
+    if (response?.ok) speak(response.result.simplified, 'us');
+  });
+  refs.phonetics.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void togglePhonetics(open);
+  });
+  refs.body.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const wordElement = target?.closest<HTMLElement>('[data-ra-word]');
+    if (!wordElement) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const word = wordElement.dataset.raWord;
+    if (!word) return;
+    flashWord(wordElement);
+    speak(word, settings?.accent ?? 'uk');
   });
 
   // Float mode: the card trails the cursor, but only while the cursor stays over
@@ -246,15 +418,47 @@ async function openPanel(options: {
       attempts: 0,
     };
   }
+  open.response = response;
+
+  let ipa: Record<string, PhoneticEntry> = {};
+  if (response.ok) {
+    const wanted = new Set<string>([
+      ...response.result.keyWords.flatMap((entry) => lookupTokens(entry.term)),
+      ...response.result.keyPhrases.flatMap((entry) => lookupTokens(entry.term)),
+    ]);
+    if (current.phonetics) {
+      for (const token of lookupTokens(response.result.simplified)) wanted.add(token);
+    }
+    if (wanted.size > 0) {
+      try {
+        const phonetics = await sendToBackground<PhoneticsResponse>({
+          type: 'phonetics',
+          words: [...wanted],
+        });
+        if (phonetics.ok) ipa = phonetics.entries;
+      } catch {
+        // Phonetics are optional: never block the panel on them.
+      }
+    }
+  }
 
   if (!PANELS.includes(open)) return;
-  render(refs, response);
+  render(refs, response, ipa, current.accent, current.phonetics);
   // The card grew while loading, so re-clamp it to the viewport.
   placement.moveTo?.(open.point.x, open.point.y);
 }
 
+async function togglePhonetics(open: OpenPanel): Promise<void> {
+  const next = !(settings?.phonetics ?? false);
+  const saved = await saveSettings({ phonetics: next });
+  settings = saved;
+  const options = { ...open.options, point: { ...open.point } };
+  closePanel(open);
+  await openPanel(options);
+}
+
 function toggleBlock(block: HTMLElement, point: PointerPoint): void {
-  const existing = PANELS.find((panel) => panel.block === block);
+  const existing = PANELS.find((panel) => panel.options.block === block);
   if (existing) {
     closePanel(existing);
     return;
@@ -272,7 +476,6 @@ function refreshSelectionTrigger(): void {
     clearSelectionTrigger();
     return;
   }
-  // Let the browser finish updating the selection first.
   window.setTimeout(() => {
     const found = readSelection();
     if (!found) {
@@ -349,6 +552,7 @@ function startObserver(): void {
 function deactivate(): void {
   closeAll();
   clearSelectionTrigger();
+  stopSpeaking();
   for (const element of document.querySelectorAll<HTMLElement>('[data-ra-ready="1"]')) {
     delete element.dataset.raReady;
     delete element.dataset.raActive;
@@ -374,6 +578,7 @@ async function applySettings(): Promise<void> {
 
 async function init(): Promise<void> {
   await applySettings();
+  initSpeech();
 
   trigger = ensureTrigger(document);
   trigger.addEventListener('mousedown', (event) => event.preventDefault());
@@ -388,6 +593,7 @@ async function init(): Promise<void> {
     if (event.key === 'Escape') {
       closeMode('float');
       clearSelectionTrigger();
+      stopSpeaking();
     }
   });
 
