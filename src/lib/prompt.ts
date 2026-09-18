@@ -53,6 +53,49 @@ export function buildMessages(text: string, level: Level, violations: string[] =
   ];
 }
 
+/** Restating a word or a short phrase with the simplest words — still English, never a translation. */
+export function translateSystemPrompt(): string {
+  return [
+    'You help an English learner who is stuck on an English word or a short phrase.',
+    'You never translate. You say the same thing again with the simplest English words.',
+    '',
+    'HARD RULES',
+    '1. English only. Never translate. Never output Chinese or any other language.',
+    '2. Keep the same meaning. Add no fact that is not already in the input.',
+    '3. Use only the 1000 most common English words, except for names and numbers.',
+    '4. Keep proper nouns, product names and numbers exactly as they are.',
+    '',
+    'OUTPUT',
+    '- plainWords: the 1 to 4 hardest items in the input. Copy each "term" from the input, in its original form.',
+    '  "simple" is the easiest word or two that means the same thing here. Three words at most.',
+    '  Leave the list empty only when every word in the input is already simple.',
+    '- plainSentence: the whole input said again in simple words. One to three sentences, 4 to 14 words each.',
+    '  Keep every point the input makes. Say it another way, not a shorter way.',
+    '  Do not reuse a hard word from the input in this sentence; saying it another way is the whole point.',
+    '',
+    'EXAMPLES',
+    'input "fascinating"',
+    '{"plainWords":[{"term":"fascinating","simple":"very interesting"}],"plainSentence":"It makes you want to know more."}',
+    'input "carry out an investigation"',
+    '{"plainWords":[{"term":"carry out","simple":"do"},{"term":"investigation","simple":"check"}],"plainSentence":"To try to find out what happened."}',
+    '',
+    'Return JSON only, with exactly this shape:',
+    '{"plainWords": [{"term": "...", "simple": "..."}], "plainSentence": "..."}',
+  ].join('\n');
+}
+
+export function buildTranslateMessages(text: string, violations: string[] = []): ChatMessage[] {
+  const parts = ['Say this again with simpler words:', '', text];
+  if (violations.length > 0) {
+    parts.push('', 'Your previous attempt was rejected. Fix every problem below and return the full JSON again:');
+    for (const violation of violations) parts.push('- ' + violation);
+  }
+  return [
+    { role: 'system', content: translateSystemPrompt() },
+    { role: 'user', content: parts.join('\n') },
+  ];
+}
+
 /** One step deeper: explain a single word using only the easiest English. */
 export function explainSystemPrompt(): string {
   return [

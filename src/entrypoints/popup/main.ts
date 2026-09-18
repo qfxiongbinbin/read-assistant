@@ -13,6 +13,7 @@ const levelSelect = element<HTMLSelectElement>('level');
 const panelModeSelect = element<HTMLSelectElement>('panelMode');
 const accentSelect = element<HTMLSelectElement>('accent');
 const phoneticsInput = element<HTMLInputElement>('phonetics');
+const autoTranslateInput = element<HTMLInputElement>('autoTranslate');
 const modelSelect = element<HTMLSelectElement>('model');
 const apiKeyInput = element<HTMLInputElement>('apiKey');
 const siteOffInput = element<HTMLInputElement>('siteOff');
@@ -42,6 +43,7 @@ async function boot(): Promise<void> {
   panelModeSelect.value = settings.panelMode;
   accentSelect.value = settings.accent;
   phoneticsInput.checked = settings.phonetics;
+  autoTranslateInput.checked = settings.autoTranslate;
   modelSelect.value = settings.model;
   apiKeyInput.value = settings.apiKey;
 
@@ -66,6 +68,7 @@ saveButton.addEventListener('click', () => {
         panelMode: panelModeSelect.value as PanelMode,
         accent: accentSelect.value as Accent,
         phonetics: phoneticsInput.checked,
+        autoTranslate: autoTranslateInput.checked,
         model: modelSelect.value,
         apiKey: apiKeyInput.value.trim(),
         disabledHosts: [...disabledHosts],

@@ -1,4 +1,5 @@
 import { lookupTokens, lookupWords, parseTsv, variants } from '../src/lib/ipa';
+import { availableActions, TRANSLATE_MAX_WORDS } from '../src/lib/selection';
 import { pickVoice } from '../src/lib/speech';
 import {
   containsCJK,
@@ -6,10 +7,13 @@ import {
   isKnownWord,
   parseExplanation,
   parseResult,
+  parseTranslation,
   properNouns,
+  reusedHardWords,
   usesTargetWord,
   verify,
   verifyExplanation,
+  verifyTranslation,
 } from '../src/lib/verify';
 
 const FENCE = String.fromCharCode(96).repeat(3);
@@ -140,6 +144,122 @@ const notSimpler = verify('The group started a full check and found the cause.',
   keyPhrases: [],
 });
 check('rejects harder output', !notSimpler.ok);
+
+console.log('translate: parse a word or a short phrase');
+const swapped = parseTranslation(
+  '{"plainWords":[{"term":"carry out","simple":"do"},{"term":"investigation","simple":"check"}],"plainSentence":"To try to find out what happened."}',
+);
+check('reads the swaps', swapped?.plainWords.length === 2);
+check('reads the plain sentence', swapped?.plainSentence.startsWith('To try') === true);
+check('rejects garbage', parseTranslation('no json at all') === null);
+check('rejects a missing sentence', parseTranslation('{"plainWords":[{"term":"a","simple":"b"}]}') === null);
+check(
+  'drops empty swaps',
+  parseTranslation('{"plainWords":[{"term":"ban","simple":""},{"term":"put off","simple":"delay"}],"plainSentence":"Wait."}')
+    ?.plainWords.length === 1,
+);
+check(
+  'caps swaps at four',
+  parseTranslation(
+    '{"plainWords":[{"term":"a","simple":"1"},{"term":"b","simple":"2"},{"term":"c","simple":"3"},{"term":"d","simple":"4"},{"term":"e","simple":"5"}],"plainSentence":"Wait."}',
+  )?.plainWords.length === 4,
+);
+
+console.log('translate: verification');
+const single = verifyTranslation('fascinating', {
+  plainWords: [{ term: 'fascinating', simple: 'very interesting' }],
+  plainSentence: 'It makes you want to know more.',
+});
+check('accepts a single word said another way', single.ok, single.violations.join(' | '));
+
+const phrase = verifyTranslation('carry out an investigation', {
+  plainWords: [
+    { term: 'carry out', simple: 'do' },
+    { term: 'investigation', simple: 'check' },
+  ],
+  plainSentence: 'To try to find out what happened.',
+});
+check('accepts a short phrase said another way', phrase.ok, phrase.violations.join(' | '));
+
+const longForm = verifyTranslation(
+  'The organization subsequently initiated a comprehensive investigation into the circumstances.',
+  {
+    plainWords: [
+      { term: 'initiated', simple: 'started' },
+      { term: 'comprehensive', simple: 'full' },
+      { term: 'investigation', simple: 'check' },
+      { term: 'circumstances', simple: 'what happened' },
+    ],
+    plainSentence: 'The group started a full check to find out what happened.',
+  },
+);
+check('accepts a sentence said another way', longForm.ok, longForm.violations.join(' | '));
+
+const echoed = verifyTranslation('fascinating', {
+  plainWords: [{ term: 'fascinating', simple: 'very interesting' }],
+  plainSentence: 'It was a fascinating thing to see.',
+});
+check(
+  'rejects echoing the hard word back',
+  !echoed.ok && echoed.violations.some((v) => v.includes('reused')),
+  echoed.violations.join(' | '),
+);
+check('detects the reuse directly', reusedHardWords('fascinating', 'a fascinating thing').join(',') === 'fascinating');
+
+check(
+  'rejects Chinese output',
+  !verifyTranslation('fascinating', {
+    plainWords: [{ term: 'fascinating', simple: 'very interesting' }],
+    plainSentence: '\u8fd9\u662f\u4e2d\u6587\u3002',
+  }).ok,
+);
+check(
+  'rejects a missing swap for a hard word',
+  !verifyTranslation('ubiquitous', { plainWords: [], plainSentence: 'It is everywhere.' }).ok,
+);
+check(
+  'rejects a swap that is not in the input',
+  !verifyTranslation('ubiquitous', {
+    plainWords: [{ term: 'widespread', simple: 'everywhere' }],
+    plainSentence: 'It is found in many places.',
+  }).ok,
+);
+check(
+  'rejects a swap that is not simpler',
+  !verifyTranslation('ubiquitous', {
+    plainWords: [{ term: 'ubiquitous', simple: 'omnipresent' }],
+    plainSentence: 'It is found in many places.',
+  }).ok,
+);
+check(
+  'rejects a dropped number',
+  !verifyTranslation('a 40 percent rise', {
+    plainWords: [{ term: 'rise', simple: 'going up' }],
+    plainSentence: 'It went up a lot.',
+  }).ok,
+);
+
+console.log('selection: which actions a selection can use');
+const PASSAGE =
+  'The committee said on Tuesday that it would carry out a comprehensive investigation into the circumstances that led to the unexpected termination of the programme, which had originally been expected to conclude sometime during the course of the following year, and that it would publish its findings.';
+const ONE_SENTENCE =
+  'The organization subsequently initiated a comprehensive investigation into the circumstances.';
+check('a single word can only be restated', availableActions('fascinating').join(',') === 'translate');
+check('a tiny phrase can only be restated', availableActions('put off').join(',') === 'translate');
+check('a phrase can also be simplified', availableActions('carry out an investigation').join(',') === 'translate,simplify');
+check('a sentence can be both', availableActions(ONE_SENTENCE).join(',') === 'translate,simplify');
+check('a passage can only be simplified', availableActions(PASSAGE).join(',') === 'simplify');
+check('a passage really is over the limit', PASSAGE.split(/\s+/).filter(Boolean).length > TRANSLATE_MAX_WORDS);
+check(
+  'the limit itself is still restatable',
+  availableActions(Array(TRANSLATE_MAX_WORDS).fill('word').join(' ')).includes('translate'),
+);
+check(
+  'one word over the limit is refused',
+  !availableActions(Array(TRANSLATE_MAX_WORDS + 1).fill('word').join(' ')).includes('translate'),
+);
+check('the limit is the output budget', TRANSLATE_MAX_WORDS === 40);
+check('a passage is still worth simplifying', availableActions(PASSAGE).join(',') !== '');
 
 console.log('ipa');
 const table = parseTsv(
