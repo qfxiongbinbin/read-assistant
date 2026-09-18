@@ -7,6 +7,16 @@ export type PanelMode = 'below' | 'side' | 'float';
 
 export const PANEL_MODES: readonly PanelMode[] = ['below', 'side', 'float'];
 
+/**
+ * What the reader asked for.
+ * - `simplify` rewrites a sentence or a paragraph at the chosen CEFR level.
+ * - `translate` restates a word or a short phrase with the simplest words and one short sentence.
+ *   It is the only action a short selection can use, because a single word has nothing to rewrite.
+ */
+export type Action = 'simplify' | 'translate';
+
+export const ACTIONS: readonly Action[] = ['simplify', 'translate'];
+
 /** Pronunciation variant. */
 export type Accent = 'uk' | 'us';
 
@@ -34,6 +44,14 @@ export interface SimplifyResult {
   keyPhrases: KeyTerm[];
 }
 
+/** A word or short phrase restated with simpler words. */
+export interface TranslateResult {
+  /** Hard words or chunks from the selection, each swapped for a simpler word. */
+  plainWords: KeyTerm[];
+  /** The whole selection said again with the simplest words, in one to three short sentences. */
+  plainSentence: string;
+}
+
 export interface PhoneticEntry {
   uk: string;
   us: string;
@@ -55,6 +73,8 @@ export interface Settings {
   panelMode: PanelMode;
   accent: Accent;
   phonetics: boolean;
+  /** Run on words and short phrases right after they are selected, without a click. */
+  autoTranslate: boolean;
   model: string;
   apiKey: string;
   disabledHosts: string[];
@@ -66,6 +86,7 @@ export const DEFAULT_SETTINGS: Settings = {
   panelMode: 'below',
   accent: 'uk',
   phonetics: true,
+  autoTranslate: false,
   model: 'deepseek-chat',
   apiKey: '',
   disabledHosts: [],
@@ -85,6 +106,16 @@ export type SimplifyResponse =
   | { ok: false; error: string; attempts: number };
 
 export type GetSettingsRequest = { type: 'getSettings' };
+
+export type TranslateRequest = {
+  type: 'translate';
+  text: string;
+  model: string;
+};
+
+export type TranslateResponse =
+  | { ok: true; result: TranslateResult; cached: boolean; attempts: number }
+  | { ok: false; error: string; attempts: number };
 
 export type ExplainRequest = {
   type: 'explain';
@@ -107,6 +138,7 @@ export type PhoneticsResponse =
 
 export type RuntimeMessage =
   | SimplifyRequest
+  | TranslateRequest
   | ExplainRequest
   | GetSettingsRequest
   | PhoneticsRequest;
@@ -114,9 +146,11 @@ export type RuntimeMessage =
 export interface CachedEntry<T> {
   result: T;
   ts: number;
-  level: Level;
+  /** CEFR level the result was produced for. Absent when the action is level-independent. */
+  level?: Level;
   model: string;
 }
 
 export type CacheEntry = CachedEntry<SimplifyResult>;
 export type ExplainCacheEntry = CachedEntry<ExplainResult>;
+export type TranslateCacheEntry = CachedEntry<TranslateResult>;

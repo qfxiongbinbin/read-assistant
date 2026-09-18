@@ -10,6 +10,7 @@ import {
   readSelection,
   showTrigger,
   type SelectedText,
+  type TriggerRefs,
 } from '../lib/selection';
 import { initSpeech, speak, stopSpeaking } from '../lib/speech';
 import { sendToBackground } from '../lib/storage';
@@ -17,6 +18,7 @@ import { injectStyles, PANEL_CLASS } from '../lib/style';
 import {
   SETTINGS_KEY,
   type Accent,
+  type Action,
   type ExplainResponse,
   type ExplainResult,
   type KeyTerm,
@@ -26,14 +28,17 @@ import {
   type PhoneticsResponse,
   type Settings,
   type SimplifyResponse,
+  type TranslateResponse,
 } from '../lib/types';
 
 const ACCENT_ORDER: readonly Accent[] = ['uk', 'us'];
 const MAX_DRILL_DEPTH = 12;
+/** Settle time before auto-translating, so a double click on a word does not fire twice. */
+const AUTO_TRANSLATE_DELAY_MS = 220;
 
 interface PanelRefs {
   root: HTMLElement;
-  label: HTMLElement;
+  tabs: Record<Action, HTMLButtonElement>;
   body: HTMLElement;
   playUk: HTMLButtonElement;
   playUs: HTMLButtonElement;
@@ -44,6 +49,10 @@ interface PanelRefs {
 
 interface PanelOptions {
   kind: 'block' | 'selection';
+  /** The action the panel opens with. */
+  action: Action;
+  /** A word or a short phrase: Translate only, because there is nothing to rewrite. */
+  short: boolean;
   block: HTMLElement | null;
   anchor: HTMLElement;
   text: string;
@@ -58,7 +67,10 @@ interface OpenPanel {
   placement: PanelPlacement;
   cleanup: (() => void)[];
   point: PointerPoint;
-  response: SimplifyResponse | null;
+  /** The action currently on screen; the reader can switch it without selecting again. */
+  action: Action;
+  simplify: SimplifyResponse | null;
+  translate: TranslateResponse | null;
   /** Pronunciation, accumulated as the reader drills down. */
   ipa: Record<string, PhoneticEntry>;
   /** Words we already asked the dictionary about, hit or miss. */
@@ -73,7 +85,7 @@ const PANELS: OpenPanel[] = [];
 let settings: Settings | null = null;
 let observer: MutationObserver | null = null;
 let scanTimer: number | null = null;
-let trigger: HTMLButtonElement | null = null;
+let trigger: TriggerRefs | null = null;
 let pendingSelection: SelectedText | null = null;
 
 function isActive(): boolean {
@@ -99,12 +111,6 @@ function buildPanel(level: Level): PanelRefs {
   badge.className = PANEL_CLASS + '__badge';
   badge.textContent = level;
 
-  const label = document.createElement('span');
-  label.textContent = 'Simplifying';
-
-  const spacer = document.createElement('span');
-  spacer.className = PANEL_CLASS + '__spacer';
-
   const makeButton = (text: string, title: string): HTMLButtonElement => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -113,6 +119,23 @@ function buildPanel(level: Level): PanelRefs {
     button.title = title;
     return button;
   };
+
+  const makeTab = (action: Action, text: string): HTMLButtonElement => {
+    const button = makeButton(text, '');
+    button.className = PANEL_CLASS + '__tab';
+    button.dataset.raTab = action;
+    return button;
+  };
+
+  const tabs: Record<Action, HTMLButtonElement> = {
+    simplify: makeTab('simplify', 'Simplify'),
+    translate: makeTab('translate', 'Translate'),
+  };
+  tabs.simplify.title = 'Rewrite this in simple English';
+  tabs.translate.title = 'Say this with simpler words';
+
+  const spacer = document.createElement('span');
+  spacer.className = PANEL_CLASS + '__spacer';
 
   const playUk = makeButton('UK', 'Read the whole text with a British voice');
   const playUs = makeButton('US', 'Read the whole text with an American voice');
@@ -123,7 +146,7 @@ function buildPanel(level: Level): PanelRefs {
 
   const close = makeButton('✕', 'Hide');
 
-  meta.append(badge, label, spacer, playUk, playUs, phonetics, retry, close);
+  meta.append(badge, tabs.simplify, tabs.translate, spacer, playUk, playUs, phonetics, retry, close);
 
   const body = document.createElement('div');
   body.className = PANEL_CLASS + '__body';
@@ -133,7 +156,7 @@ function buildPanel(level: Level): PanelRefs {
   body.appendChild(status);
 
   root.append(meta, body);
-  return { root, label, body, playUk, playUs, phonetics, retry, close };
+  return { root, tabs, body, playUk, playUs, phonetics, retry, close };
 }
 
 function closePanel(open: OpenPanel): void {
@@ -305,13 +328,23 @@ function appendHint(container: HTMLElement): void {
   container.appendChild(hint);
 }
 
+/** Root context for a drill-down: whatever text the reader is currently looking at. */
 function contextFor(open: OpenPanel, depth: number): string {
   const parent = depth > 0 ? open.stack[depth - 1] : null;
   if (parent) {
     const entry = open.explains.get(parent);
     if (entry) return entry.explanation;
   }
-  return open.response?.ok ? open.response.result.simplified : open.options.text;
+  if (open.action === 'translate') {
+    return open.translate?.ok ? open.translate.result.plainSentence : open.options.text;
+  }
+  return open.simplify?.ok ? open.simplify.result.simplified : open.options.text;
+}
+
+/** The text the UK / US buttons read out loud. */
+function spokenText(open: OpenPanel): string {
+  if (open.action === 'translate') return open.translate?.ok ? open.translate.result.plainSentence : '';
+  return open.simplify?.ok ? open.simplify.result.simplified : '';
 }
 
 async function ensureIpa(open: OpenPanel, candidates: readonly string[]): Promise<void> {
@@ -329,12 +362,27 @@ async function ensureIpa(open: OpenPanel, candidates: readonly string[]): Promis
 }
 
 function renderRootView(open: OpenPanel, accent: Accent, phonetics: boolean): void {
-  const result = open.response?.ok ? open.response.result : null;
+  const result = open.simplify?.ok ? open.simplify.result : null;
   if (!result) return;
   open.refs.body.classList.toggle(PANEL_CLASS + '__body--phonetics', phonetics);
   renderSimplified(open.refs.body, result, open.ipa, accent, phonetics);
   appendSection(open.refs.body, 'Key words', result.keyWords, open.ipa, accent);
   appendSection(open.refs.body, 'Key phrases', result.keyPhrases, open.ipa, accent);
+}
+
+/** The restatement: one short sentence in the plainest words, plus the word swaps behind it. */
+function renderTranslateView(open: OpenPanel, accent: Accent, phonetics: boolean): void {
+  const result = open.translate?.ok ? open.translate.result : null;
+  if (!result) return;
+  const body = open.refs.body;
+  body.classList.toggle(PANEL_CLASS + '__body--phonetics', phonetics);
+
+  const sentence = document.createElement('p');
+  renderText(sentence, result.plainSentence, open.ipa, accent, phonetics);
+  body.appendChild(sentence);
+
+  appendSection(body, 'Plain words', result.plainWords, open.ipa, accent);
+  appendHint(body);
 }
 
 function renderSimplified(
@@ -443,35 +491,75 @@ function renderDrillView(open: OpenPanel, accent: Accent, phonetics: boolean): v
   body.appendChild(loading);
 }
 
+function renderFailure(open: OpenPanel, message: string): void {
+  setHidden(open.refs.retry, false);
+  const node = document.createElement('p');
+  node.className = PANEL_CLASS + '__status ' + PANEL_CLASS + '__error';
+  node.textContent = message;
+  open.refs.body.appendChild(node);
+}
+
+function renderLoading(open: OpenPanel): void {
+  setHidden(open.refs.retry, true);
+  const node = document.createElement('p');
+  node.className = PANEL_CLASS + '__status ' + PANEL_CLASS + '__dots';
+  node.textContent = open.action === 'translate' ? 'Finding simpler words' : 'Simplifying';
+  open.refs.body.appendChild(node);
+}
+
+function renderSimplifyView(open: OpenPanel, accent: Accent, phonetics: boolean): void {
+  const response = open.simplify;
+  if (!response) {
+    renderLoading(open);
+    return;
+  }
+  if (!response.ok) {
+    renderFailure(open, response.error);
+    return;
+  }
+  renderRootView(open, accent, phonetics);
+  appendHint(open.refs.body);
+}
+
 function renderView(open: OpenPanel): void {
   const { refs } = open;
   refs.body.textContent = '';
   refs.body.classList.remove(PANEL_CLASS + '__body--phonetics');
+  setHidden(refs.retry, true);
 
   const accent = settings?.accent ?? 'uk';
   const phonetics = settings?.phonetics ?? false;
   refs.phonetics.classList.toggle(PANEL_CLASS + '__btn--on', phonetics);
 
-  const response = open.response;
-  if (!response || !response.ok) {
-    refs.label.textContent = 'Not simplified';
-    setHidden(refs.retry, false);
-    const node = document.createElement('p');
-    node.className = PANEL_CLASS + '__status ' + PANEL_CLASS + '__error';
-    node.textContent = response ? response.error : 'Something went wrong.';
-    refs.body.appendChild(node);
+  // A word or a short phrase has nothing to rewrite, so that tab says why it is unavailable.
+  refs.tabs.simplify.disabled = open.options.short;
+  refs.tabs.simplify.title = open.options.short
+    ? 'Select at least 20 characters or 12 words to simplify'
+    : 'Rewrite this in simple English';
+  refs.tabs.simplify.classList.toggle(PANEL_CLASS + '__tab--on', open.action === 'simplify');
+  refs.tabs.translate.classList.toggle(PANEL_CLASS + '__tab--on', open.action === 'translate');
+
+  // Drilling into a word takes over the panel whichever action opened it.
+  if (open.stack.length > 0) {
+    renderDrillView(open, accent, phonetics);
+    appendHint(refs.body);
     return;
   }
 
-  setHidden(refs.retry, true);
-  refs.label.textContent = open.stack.length > 0 ? 'Explaining' : 'Simplified';
-
-  if (open.stack.length === 0) {
-    renderRootView(open, accent, phonetics);
-  } else {
-    renderDrillView(open, accent, phonetics);
+  if (open.action === 'translate') {
+    const response = open.translate;
+    if (!response) {
+      renderLoading(open);
+      return;
+    }
+    if (!response.ok) {
+      renderFailure(open, response.error);
+      return;
+    }
+    renderTranslateView(open, accent, phonetics);
+    return;
   }
-  appendHint(refs.body);
+  renderSimplifyView(open, accent, phonetics);
 }
 
 async function loadExplanation(open: OpenPanel, word: string, context: string): Promise<void> {
@@ -547,7 +635,9 @@ async function openPanel(options: PanelOptions): Promise<void> {
     placement,
     cleanup: [],
     point: options.point,
-    response: null,
+    action: options.action,
+    simplify: null,
+    translate: null,
     ipa: {},
     ipaTried: new Set<string>(),
     stack: [],
@@ -565,26 +655,35 @@ async function openPanel(options: PanelOptions): Promise<void> {
     event.preventDefault();
     event.stopPropagation();
     const point = { ...open.point };
+    const action = open.action;
     closePanel(open);
-    void openPanel({ ...options, point });
+    void openPanel({ ...options, action, point });
   });
   refs.playUk.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    const response = open.response;
-    if (response?.ok) speak(response.result.simplified, 'uk');
+    const text = spokenText(open);
+    if (text.length > 0) speak(text, 'uk');
   });
   refs.playUs.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    const response = open.response;
-    if (response?.ok) speak(response.result.simplified, 'us');
+    const text = spokenText(open);
+    if (text.length > 0) speak(text, 'us');
   });
   refs.phonetics.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
     void togglePhonetics(open);
   });
+
+  for (const action of ['simplify', 'translate'] as const) {
+    refs.tabs[action].addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void switchAction(open, action);
+    });
+  }
 
   refs.body.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
@@ -641,33 +740,7 @@ async function openPanel(options: PanelOptions): Promise<void> {
     open.cleanup.push(() => document.removeEventListener('mousemove', onMove, true));
   }
 
-  let response: SimplifyResponse;
-  try {
-    response = await sendToBackground<SimplifyResponse>({
-      type: 'simplify',
-      text: options.text,
-      level: current.level,
-      model: current.model,
-    });
-  } catch (error) {
-    response = {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-      attempts: 0,
-    };
-  }
-  open.response = response;
-
-  if (response.ok) {
-    const wanted = new Set<string>([
-      ...response.result.keyWords.flatMap((entry) => lookupTokens(entry.term)),
-      ...response.result.keyPhrases.flatMap((entry) => lookupTokens(entry.term)),
-    ]);
-    if (current.phonetics) {
-      for (const token of lookupTokens(response.result.simplified)) wanted.add(token);
-    }
-    await ensureIpa(open, [...wanted]);
-  }
+  await loadAction(open, options.action);
 
   if (!PANELS.includes(open)) return;
   renderView(open);
@@ -675,11 +748,96 @@ async function openPanel(options: PanelOptions): Promise<void> {
   placement.moveTo?.(open.point.x, open.point.y);
 }
 
+/** Words whose phonetics the result needs, so the dictionary is queried once per panel. */
+function wantedTokens(open: OpenPanel, action: Action): string[] {
+  const phonetics = settings?.phonetics ?? false;
+  const wanted = new Set<string>();
+  if (action === 'translate') {
+    const response = open.translate;
+    if (!response?.ok) return [];
+    for (const entry of response.result.plainWords) {
+      for (const token of lookupTokens(entry.term)) wanted.add(token);
+    }
+    if (phonetics) {
+      for (const token of lookupTokens(response.result.plainSentence)) wanted.add(token);
+    }
+    return [...wanted];
+  }
+  const response = open.simplify;
+  if (!response?.ok) return [];
+  for (const entry of [...response.result.keyWords, ...response.result.keyPhrases]) {
+    for (const token of lookupTokens(entry.term)) wanted.add(token);
+  }
+  if (phonetics) {
+    for (const token of lookupTokens(response.result.simplified)) wanted.add(token);
+  }
+  return [...wanted];
+}
+
+async function loadAction(open: OpenPanel, action: Action): Promise<void> {
+  const current = settings;
+  if (!current) return;
+
+  // The renderers treat a missing response as "still loading".
+  if (PANELS.includes(open)) renderView(open);
+
+  if (action === 'translate') {
+    try {
+      open.translate = await sendToBackground<TranslateResponse>({
+        type: 'translate',
+        text: open.options.text,
+        model: current.model,
+      });
+    } catch (error) {
+      open.translate = {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        attempts: 0,
+      };
+    }
+  } else {
+    try {
+      open.simplify = await sendToBackground<SimplifyResponse>({
+        type: 'simplify',
+        text: open.options.text,
+        level: current.level,
+        model: current.model,
+      });
+    } catch (error) {
+      open.simplify = {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        attempts: 0,
+      };
+    }
+  }
+
+  await ensureIpa(open, wantedTokens(open, action));
+}
+
+/** Swap the action for the same selection, reusing whatever is already loaded. */
+async function switchAction(open: OpenPanel, action: Action): Promise<void> {
+  if (open.action === action) return;
+  if (action === 'simplify' && open.options.short) return;
+
+  open.action = action;
+  open.stack = [];
+  renderView(open);
+
+  const loaded = action === 'translate' ? open.translate : open.simplify;
+  if (loaded) return;
+
+  await loadAction(open, action);
+  if (!PANELS.includes(open) || open.action !== action) return;
+  renderView(open);
+  open.placement.moveTo?.(open.point.x, open.point.y);
+}
+
 async function togglePhonetics(open: OpenPanel): Promise<void> {
   const next = !(settings?.phonetics ?? false);
   const saved = await saveSettings({ phonetics: next });
   settings = saved;
-  const options = { ...open.options, point: { ...open.point } };
+  const options = { ...open.options, action: open.action, point: { ...open.point } };
   closePanel(open);
   await openPanel(options);
 }
@@ -690,7 +848,7 @@ function toggleBlock(block: HTMLElement, point: PointerPoint): void {
     closePanel(existing);
     return;
   }
-  void openPanel({ kind: 'block', block, anchor: block, text: blockText(block), point });
+  void openPanel({ kind: 'block', action: 'simplify', short: false, block, anchor: block, text: blockText(block), point });
 }
 
 function clearSelectionTrigger(): void {
@@ -698,11 +856,27 @@ function clearSelectionTrigger(): void {
   if (trigger) hideTrigger(trigger);
 }
 
-function refreshSelectionTrigger(): void {
+function openSelection(found: SelectedText, action: Action): void {
+  void openPanel({
+    kind: 'selection',
+    action,
+    short: found.kind === 'short',
+    block: null,
+    anchor: found.anchor,
+    text: found.text,
+    point: { x: found.rect.left + found.rect.width / 2, y: found.rect.top },
+  });
+}
+
+function refreshSelectionTrigger(event: Event): void {
   if (!isActive()) {
     clearSelectionTrigger();
     return;
   }
+  // Interactions with our own pill must not be read back as a fresh selection.
+  if (trigger && event.target instanceof Node && trigger.root.contains(event.target)) return;
+
+  const auto = settings?.autoTranslate ?? false;
   window.setTimeout(() => {
     const found = readSelection();
     if (!found) {
@@ -710,9 +884,15 @@ function refreshSelectionTrigger(): void {
       return;
     }
     pendingSelection = found;
+    if (auto && found.kind === 'short') {
+      // "Run right away" is on: no click needed for a word or a short phrase.
+      if (trigger) hideTrigger(trigger);
+      openSelection(found, 'translate');
+      return;
+    }
     if (!trigger) return;
-    showTrigger(trigger, found.rect);
-  }, 0);
+    showTrigger(trigger, found.rect, found.kind);
+  }, auto ? AUTO_TRANSLATE_DELAY_MS : 0);
 }
 
 function onTriggerClick(event: MouseEvent): void {
@@ -721,13 +901,15 @@ function onTriggerClick(event: MouseEvent): void {
   const found = pendingSelection;
   clearSelectionTrigger();
   if (!found) return;
-  void openPanel({
-    kind: 'selection',
-    block: null,
-    anchor: found.anchor,
-    text: found.text,
-    point: { x: found.rect.left + found.rect.width / 2, y: found.rect.top },
-  });
+
+  const target = event.target as HTMLElement | null;
+  const button =
+    target && typeof target.closest === 'function'
+      ? target.closest<HTMLElement>('[data-ra-action]')
+      : null;
+  const clicked = button?.dataset.raAction;
+  if (clicked === 'simplify' && found.kind === 'short') return;
+  openSelection(found, clicked === 'simplify' ? 'simplify' : 'translate');
 }
 
 function onDocumentClick(event: MouseEvent): void {
@@ -808,8 +990,8 @@ async function init(): Promise<void> {
   initSpeech();
 
   trigger = ensureTrigger(document);
-  trigger.addEventListener('mousedown', (event) => event.preventDefault());
-  trigger.addEventListener('click', onTriggerClick);
+  trigger.root.addEventListener('mousedown', (event) => event.preventDefault());
+  trigger.root.addEventListener('click', onTriggerClick);
 
   document.addEventListener('click', onDocumentClick, true);
   document.addEventListener('mouseup', refreshSelectionTrigger, true);

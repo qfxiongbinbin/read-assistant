@@ -6,7 +6,8 @@ const CSS = `
 /* Defensive: the host page's CSS must not be able to reveal our hidden controls. */
 .${PANEL_CLASS}[hidden],
 .${PANEL_CLASS} [hidden],
-.${TRIGGER_CLASS}[hidden] {
+.${TRIGGER_CLASS}[hidden],
+.${TRIGGER_CLASS} [hidden] {
   display: none !important;
 }
 .${PANEL_CLASS},
@@ -26,22 +27,34 @@ const CSS = `
   box-shadow: inset 3px 0 0 0 rgba(45, 110, 220, 0.9);
 }
 
-/* Small pill that appears after the reader selects a sentence. */
+/* Small pill that appears after the reader selects something: one segment per usable action. */
 .${TRIGGER_CLASS} {
   position: fixed;
   z-index: 2147483601;
-  padding: 5px 11px;
+  display: flex;
+  align-items: stretch;
+  padding: 0;
   margin: 0;
   border: 0;
   border-radius: 999px;
+  overflow: hidden;
   background: #2d6edc;
+  box-shadow: 0 6px 18px rgba(16, 30, 54, 0.26);
+}
+.${TRIGGER_CLASS}__btn {
+  padding: 5px 11px;
+  margin: 0;
+  border: 0;
+  background: none;
   color: #ffffff;
   font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   letter-spacing: 0.02em;
   cursor: pointer;
-  box-shadow: 0 6px 18px rgba(16, 30, 54, 0.26);
 }
-.${TRIGGER_CLASS}:hover { background: #1f5bc4; }
+.${TRIGGER_CLASS}__btn + .${TRIGGER_CLASS}__btn {
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.3);
+}
+.${TRIGGER_CLASS}__btn:hover { background: #1f5bc4; }
 
 .${PANEL_CLASS} {
   margin: 8px 0 16px;
@@ -100,6 +113,24 @@ const CSS = `
   letter-spacing: 0.04em;
 }
 .${PANEL_CLASS}__spacer { flex: 1; }
+/* Action switcher: Simplify and Translate for the same selection. */
+.${PANEL_CLASS}__tab {
+  border: 0;
+  background: none;
+  padding: 2px 6px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #5b6b82;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.${PANEL_CLASS}__tab:hover:not(:disabled) { background: rgba(45, 110, 220, 0.12); color: #2d6edc; }
+.${PANEL_CLASS}__tab--on { background: #2d6edc; color: #ffffff; }
+.${PANEL_CLASS}__tab--on:hover { background: #1f5bc4; color: #ffffff; }
+.${PANEL_CLASS}__tab:disabled { opacity: 0.4; cursor: default; }
 .${PANEL_CLASS}__btn {
   border: 0;
   background: none;
