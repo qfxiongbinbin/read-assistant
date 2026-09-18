@@ -1,4 +1,5 @@
 import { lookupTokens, lookupWords, parseTsv, variants } from '../src/lib/ipa';
+import { availableActions, TRANSLATE_MAX_WORDS } from '../src/lib/selection';
 import { pickVoice } from '../src/lib/speech';
 import {
   containsCJK,
@@ -237,6 +238,28 @@ check(
     plainSentence: 'It went up a lot.',
   }).ok,
 );
+
+console.log('selection: which actions a selection can use');
+const PASSAGE =
+  'The committee said on Tuesday that it would carry out a comprehensive investigation into the circumstances that led to the unexpected termination of the programme, which had originally been expected to conclude sometime during the course of the following year, and that it would publish its findings.';
+const ONE_SENTENCE =
+  'The organization subsequently initiated a comprehensive investigation into the circumstances.';
+check('a single word can only be restated', availableActions('fascinating').join(',') === 'translate');
+check('a tiny phrase can only be restated', availableActions('put off').join(',') === 'translate');
+check('a phrase can also be simplified', availableActions('carry out an investigation').join(',') === 'translate,simplify');
+check('a sentence can be both', availableActions(ONE_SENTENCE).join(',') === 'translate,simplify');
+check('a passage can only be simplified', availableActions(PASSAGE).join(',') === 'simplify');
+check('a passage really is over the limit', PASSAGE.split(/\s+/).filter(Boolean).length > TRANSLATE_MAX_WORDS);
+check(
+  'the limit itself is still restatable',
+  availableActions(Array(TRANSLATE_MAX_WORDS).fill('word').join(' ')).includes('translate'),
+);
+check(
+  'one word over the limit is refused',
+  !availableActions(Array(TRANSLATE_MAX_WORDS + 1).fill('word').join(' ')).includes('translate'),
+);
+check('the limit is the output budget', TRANSLATE_MAX_WORDS === 40);
+check('a passage is still worth simplifying', availableActions(PASSAGE).join(',') !== '');
 
 console.log('ipa');
 const table = parseTsv(

@@ -11,11 +11,11 @@ import {
   showTrigger,
   type SelectedText,
   type TriggerRefs,
-} from '../lib/selection';
-import { initSpeech, speak, stopSpeaking } from '../lib/speech';
+} from '../lib/selection';import { initSpeech, speak, stopSpeaking } from '../lib/speech';
 import { sendToBackground } from '../lib/storage';
 import { injectStyles, PANEL_CLASS } from '../lib/style';
 import {
+  ACTIONS,
   SETTINGS_KEY,
   type Accent,
   type Action,
@@ -36,6 +36,17 @@ const MAX_DRILL_DEPTH = 12;
 /** Settle time before auto-translating, so a double click on a word does not fire twice. */
 const AUTO_TRANSLATE_DELAY_MS = 220;
 
+const ACTION_TITLE: Record<Action, string> = {
+  simplify: 'Rewrite this in simple English',
+  translate: 'Say this with simpler words',
+};
+
+/** Why an action is greyed out, so the tab bar doubles as an explanation of the boundary. */
+const ACTION_UNAVAILABLE: Record<Action, string> = {
+  simplify: 'Select at least 20 characters or 12 words to simplify',
+  translate: 'Select a word, a phrase or one sentence to restate',
+};
+
 interface PanelRefs {
   root: HTMLElement;
   tabs: Record<Action, HTMLButtonElement>;
@@ -51,8 +62,8 @@ interface PanelOptions {
   kind: 'block' | 'selection';
   /** The action the panel opens with. */
   action: Action;
-  /** A word or a short phrase: Translate only, because there is nothing to rewrite. */
-  short: boolean;
+  /** The actions this text can use; everything else is disabled with a reason. */
+  actions: readonly Action[];
   block: HTMLElement | null;
   anchor: HTMLElement;
   text: string;
@@ -131,8 +142,6 @@ function buildPanel(level: Level): PanelRefs {
     simplify: makeTab('simplify', 'Simplify'),
     translate: makeTab('translate', 'Translate'),
   };
-  tabs.simplify.title = 'Rewrite this in simple English';
-  tabs.translate.title = 'Say this with simpler words';
 
   const spacer = document.createElement('span');
   spacer.className = PANEL_CLASS + '__spacer';
@@ -531,13 +540,14 @@ function renderView(open: OpenPanel): void {
   const phonetics = settings?.phonetics ?? false;
   refs.phonetics.classList.toggle(PANEL_CLASS + '__btn--on', phonetics);
 
-  // A word or a short phrase has nothing to rewrite, so that tab says why it is unavailable.
-  refs.tabs.simplify.disabled = open.options.short;
-  refs.tabs.simplify.title = open.options.short
-    ? 'Select at least 20 characters or 12 words to simplify'
-    : 'Rewrite this in simple English';
-  refs.tabs.simplify.classList.toggle(PANEL_CLASS + '__tab--on', open.action === 'simplify');
-  refs.tabs.translate.classList.toggle(PANEL_CLASS + '__tab--on', open.action === 'translate');
+  // Unavailable actions stay visible but greyed out, so the tab bar explains the boundary.
+  for (const action of ACTIONS) {
+    const tab = refs.tabs[action];
+    const available = open.options.actions.includes(action);
+    tab.disabled = !available;
+    tab.title = available ? ACTION_TITLE[action] : ACTION_UNAVAILABLE[action];
+    tab.classList.toggle(PANEL_CLASS + '__tab--on', open.action === action);
+  }
 
   // Drilling into a word takes over the panel whichever action opened it.
   if (open.stack.length > 0) {
@@ -818,7 +828,7 @@ async function loadAction(open: OpenPanel, action: Action): Promise<void> {
 /** Swap the action for the same selection, reusing whatever is already loaded. */
 async function switchAction(open: OpenPanel, action: Action): Promise<void> {
   if (open.action === action) return;
-  if (action === 'simplify' && open.options.short) return;
+  if (!open.options.actions.includes(action)) return;
 
   open.action = action;
   open.stack = [];
@@ -848,7 +858,15 @@ function toggleBlock(block: HTMLElement, point: PointerPoint): void {
     closePanel(existing);
     return;
   }
-  void openPanel({ kind: 'block', action: 'simplify', short: false, block, anchor: block, text: blockText(block), point });
+  void openPanel({
+    kind: 'block',
+    action: 'simplify',
+    actions: ['simplify'],
+    block,
+    anchor: block,
+    text: blockText(block),
+    point,
+  });
 }
 
 function clearSelectionTrigger(): void {
@@ -860,7 +878,7 @@ function openSelection(found: SelectedText, action: Action): void {
   void openPanel({
     kind: 'selection',
     action,
-    short: found.kind === 'short',
+    actions: found.actions,
     block: null,
     anchor: found.anchor,
     text: found.text,
@@ -884,14 +902,15 @@ function refreshSelectionTrigger(event: Event): void {
       return;
     }
     pendingSelection = found;
-    if (auto && found.kind === 'short') {
-      // "Run right away" is on: no click needed for a word or a short phrase.
+    // "Run right away" only applies when Translate is the selection's only option. A sentence or a
+    // passage still waits for a click, so brushing over text never fires a request.
+    if (auto && found.actions.length === 1 && found.actions[0] === 'translate') {
       if (trigger) hideTrigger(trigger);
       openSelection(found, 'translate');
       return;
     }
     if (!trigger) return;
-    showTrigger(trigger, found.rect, found.kind);
+    showTrigger(trigger, found.rect, found.actions);
   }, auto ? AUTO_TRANSLATE_DELAY_MS : 0);
 }
 
@@ -907,9 +926,9 @@ function onTriggerClick(event: MouseEvent): void {
     target && typeof target.closest === 'function'
       ? target.closest<HTMLElement>('[data-ra-action]')
       : null;
-  const clicked = button?.dataset.raAction;
-  if (clicked === 'simplify' && found.kind === 'short') return;
-  openSelection(found, clicked === 'simplify' ? 'simplify' : 'translate');
+  const clicked = button?.dataset.raAction === 'simplify' ? 'simplify' : 'translate';
+  if (!found.actions.includes(clicked)) return;
+  openSelection(found, clicked);
 }
 
 function onDocumentClick(event: MouseEvent): void {

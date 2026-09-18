@@ -1,24 +1,30 @@
 import { PANEL_CLASS, TRIGGER_CLASS } from './style';
-import type { Action } from './types';
+import { ACTIONS, type Action } from './types';
 
 const TRIGGER_ID = 'readassistant-trigger';
-/** At or above this size a selection is worth rewriting, not just restating. */
-const LONG_SELECTION_CHARS = 20;
-const LONG_SELECTION_WORDS = 12;
+/** Simplify needs enough text to be worth rewriting. */
+const SIMPLIFY_MIN_CHARS = 20;
+const SIMPLIFY_MIN_WORDS = 12;
+/**
+ * Translate restates the input in one to three sentences of at most 14 words, so it can hold about
+ * 40 words without dropping facts. Past that it must compress, and no rule in `verify.ts` can see
+ * that loss — so the limit is structural rather than a matter of asking the model nicely.
+ */
+export const TRANSLATE_MAX_WORDS = 40;
+/** Backstop for text with few word breaks, so a degenerate selection never reaches the model. */
+export const TRANSLATE_MAX_CHARS = 600;
 const EDGE = 8;
 const GAP = 8;
 const SKIP_SELECTOR =
   'input, textarea, select, [contenteditable="true"], [data-ra-skip], .' + PANEL_CLASS + ', script, style, noscript';
-
-/** A word or a short phrase can only be restated; a sentence or a paragraph can also be rewritten. */
-export type SelectionKind = 'short' | 'long';
 
 export interface SelectedText {
   text: string;
   /** Element the panel is positioned against. */
   anchor: HTMLElement;
   rect: DOMRect;
-  kind: SelectionKind;
+  /** The actions this selection can use, in pill order. */
+  actions: Action[];
 }
 
 export interface TriggerRefs {
@@ -26,14 +32,25 @@ export interface TriggerRefs {
   buttons: Record<Action, HTMLButtonElement>;
 }
 
-export function selectionKind(text: string): SelectionKind {
-  const wordCount = text.split(/\s+/).filter(Boolean).length;
-  return text.length >= LONG_SELECTION_CHARS || wordCount >= LONG_SELECTION_WORDS ? 'long' : 'short';
+export function wordCount(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Which actions a piece of text can actually use. This is the single place that decides, so the
+ * pill, the panel tabs and the background guard cannot drift apart.
+ */
+export function availableActions(text: string): Action[] {
+  const words = wordCount(text);
+  const actions: Action[] = [];
+  if (words <= TRANSLATE_MAX_WORDS && text.length <= TRANSLATE_MAX_CHARS) actions.push('translate');
+  if (text.length >= SIMPLIFY_MIN_CHARS || words >= SIMPLIFY_MIN_WORDS) actions.push('simplify');
+  return actions;
 }
 
 /**
  * Any non-empty selection is usable. A single word is the main case for Translate, so there is no
- * minimum length here; the trigger decides which actions the selection can actually use.
+ * minimum length here; `availableActions` decides which actions it can use.
  */
 export function readSelection(): SelectedText | null {
   const selection = window.getSelection();
@@ -52,7 +69,7 @@ export function readSelection(): SelectedText | null {
 
   const block = element.closest('p, li, blockquote, dd, h1, h2, h3, h4');
   const anchor = block instanceof HTMLElement ? block : element;
-  return { text, anchor, rect, kind: selectionKind(text) };
+  return { text, anchor, rect, actions: availableActions(text) };
 }
 
 function makeTriggerButton(doc: Document, action: Action, text: string, title: string): HTMLButtonElement {
@@ -83,9 +100,11 @@ export function ensureTrigger(doc: Document): TriggerRefs {
   return { root, buttons };
 }
 
-/** A short selection has nothing to rewrite, so its pill shows Translate only. */
-export function showTrigger(refs: TriggerRefs, rect: DOMRect, kind: SelectionKind): void {
-  refs.buttons.simplify.hidden = kind === 'short';
+/** A selection only gets the segments it can actually use, so the pill never offers a dead end. */
+export function showTrigger(refs: TriggerRefs, rect: DOMRect, actions: readonly Action[]): void {
+  for (const action of ACTIONS) {
+    refs.buttons[action].hidden = !actions.includes(action);
+  }
   refs.root.hidden = false;
   refs.root.style.visibility = 'hidden';
   const width = refs.root.offsetWidth;

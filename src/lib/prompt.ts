@@ -70,7 +70,7 @@ export function translateSystemPrompt(): string {
     '  "simple" is the easiest word or two that means the same thing here. Three words at most.',
     '  Leave the list empty only when every word in the input is already simple.',
     '- plainSentence: the whole input said again in simple words. One to three sentences, 4 to 14 words each.',
-    '  If the input is longer than one sentence, keep only its main points.',
+    '  Keep every point the input makes. Say it another way, not a shorter way.',
     '  Do not reuse a hard word from the input in this sentence; saying it another way is the whole point.',
     '',
     'EXAMPLES',

@@ -16,6 +16,7 @@ import {
 import { chatJson } from '../lib/llm';
 import { lookup } from '../lib/phonetics';
 import { ALLOWED_MODELS, buildExplainMessages, buildMessages, buildTranslateMessages } from '../lib/prompt';
+import { availableActions } from '../lib/selection';
 import {
   parseExplanation,
   parseResult,
@@ -100,8 +101,6 @@ async function handleSimplify(request: SimplifyRequest): Promise<SimplifyRespons
 }
 
 const MAX_TRANSLATE_ATTEMPTS = 3;
-/** Safety net only: the content script never sends more than a selected passage. */
-const MAX_TRANSLATE_CHARS = 1200;
 
 /** Restate a word or a short phrase with the simplest words. Still English, never Chinese. */
 async function handleTranslate(request: TranslateRequest): Promise<TranslateResponse> {
@@ -120,10 +119,11 @@ async function handleTranslate(request: TranslateRequest): Promise<TranslateResp
   if (text.length === 0) {
     return { ok: false, error: 'Nothing to translate.', attempts: 0 };
   }
-  if (text.length > MAX_TRANSLATE_CHARS) {
+  // Same rule the content script used to offer the action, so a stale panel cannot sneak past it.
+  if (!availableActions(text).includes('translate')) {
     return {
       ok: false,
-      error: 'This selection is too long. Select a word or a short phrase, or use Simplify.',
+      error: 'This is too long to restate. Select a word, a phrase or one sentence, or use Simplify.',
       attempts: 0,
     };
   }
