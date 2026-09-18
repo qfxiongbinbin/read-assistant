@@ -13,7 +13,7 @@ import {
   putCachedTranslate,
   translateKey,
 } from '../lib/cache';
-import { chatJson } from '../lib/llm';
+import { chatJson, testApiKey } from '../lib/llm';
 import { lookup } from '../lib/phonetics';
 import { ALLOWED_MODELS, buildExplainMessages, buildMessages, buildTranslateMessages } from '../lib/prompt';
 import { availableActions } from '../lib/selection';
@@ -35,6 +35,7 @@ import type {
   SimplifyResponse,
   TranslateRequest,
   TranslateResponse,
+  TestApiKeyResponse,
 } from '../lib/types';
 
 const MAX_ATTEMPTS = 3;
@@ -117,7 +118,7 @@ async function handleTranslate(request: TranslateRequest): Promise<TranslateResp
   const model = ALLOWED_MODELS.includes(request.model) ? request.model : settings.model;
   const text = normalizeText(request.text);
   if (text.length === 0) {
-    return { ok: false, error: 'Nothing to translate.', attempts: 0 };
+    return { ok: false, error: 'Select a word or phrase to explain.', attempts: 0 };
   }
   // Same rule the content script used to offer the action, so a stale panel cannot sneak past it.
   if (!availableActions(text).includes('translate')) {
@@ -196,11 +197,11 @@ async function handleExplain(request: ExplainRequest): Promise<ExplainResponse> 
 
   const model = ALLOWED_MODELS.includes(request.model) ? request.model : settings.model;
   const level = request.level;
-  const key = explainKey(word, level, model);
+  const context = typeof request.context === 'string' ? request.context : '';
+  const key = explainKey(word, context, level, model);
   const cached = await getCachedExplain(key);
   if (cached) return { ok: true, result: cached, cached: true, attempts: 0 };
 
-  const context = typeof request.context === 'string' ? request.context : '';
   let violations: string[] = [];
   let attempts = 0;
 
@@ -296,6 +297,17 @@ export default defineBackground(() => {
 
     if (request.type === 'getSettings') {
       void getSettings().then((settings) => sendResponse({ ok: true, settings }));
+      return true;
+    }
+
+    if (request.type === 'testApiKey') {
+      void testApiKey(request.apiKey).then(
+        () => sendResponse({ ok: true } satisfies TestApiKeyResponse),
+        (error: unknown) => sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        } satisfies TestApiKeyResponse),
+      );
       return true;
     }
 

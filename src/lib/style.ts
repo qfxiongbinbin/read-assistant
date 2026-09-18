@@ -20,8 +20,7 @@ const CSS = `
   transition: box-shadow 120ms ease, background-color 120ms ease;
 }
 [data-ra-ready='1']:hover {
-  box-shadow: inset 3px 0 0 0 rgba(45, 110, 220, 0.45);
-  background-color: rgba(45, 110, 220, 0.04);
+  box-shadow: inset 2px 0 0 0 rgba(45, 110, 220, 0.2);
 }
 [data-ra-ready='1'][data-ra-active='1'] {
   box-shadow: inset 3px 0 0 0 rgba(45, 110, 220, 0.9);
@@ -55,6 +54,25 @@ const CSS = `
   box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.3);
 }
 .${TRIGGER_CLASS}__btn:hover { background: #1f5bc4; }
+
+.readassistant-block-trigger[hidden] { display: none !important; }
+.readassistant-block-trigger {
+  position: fixed;
+  z-index: 2147483599;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(45, 110, 220, 0.28);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #2d6edc;
+  box-shadow: 0 4px 14px rgba(16, 30, 54, 0.18);
+  font: 700 14px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  cursor: pointer;
+}
+.readassistant-block-trigger:hover { background: #2d6edc; color: #ffffff; }
 
 .${PANEL_CLASS} {
   margin: 8px 0 16px;
@@ -113,7 +131,7 @@ const CSS = `
   letter-spacing: 0.04em;
 }
 .${PANEL_CLASS}__spacer { flex: 1; }
-/* Action switcher: Simplify and Translate for the same selection. */
+/* Action switcher: Simplify and Explain for the same selection. */
 .${PANEL_CLASS}__tab {
   border: 0;
   background: none;
@@ -203,6 +221,7 @@ const CSS = `
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #5b6b82;
+  cursor: pointer;
 }
 .${PANEL_CLASS}__entry { margin: 0 0 9px; }
 .${PANEL_CLASS}__entry:last-child { margin-bottom: 0; }

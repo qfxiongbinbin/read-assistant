@@ -63,6 +63,8 @@ export async function getSettings(): Promise<Settings> {
     panelMode: asPanelMode(value.panelMode),
     accent: asAccent(value.accent),
     phonetics: typeof value.phonetics === 'boolean' ? value.phonetics : DEFAULT_SETTINGS.phonetics,
+    clickParagraphs:
+      typeof value.clickParagraphs === 'boolean' ? value.clickParagraphs : DEFAULT_SETTINGS.clickParagraphs,
     autoTranslate:
       typeof value.autoTranslate === 'boolean' ? value.autoTranslate : DEFAULT_SETTINGS.autoTranslate,
     disabledHosts: Array.isArray(value.disabledHosts) ? value.disabledHosts : [],
@@ -139,9 +141,12 @@ function pruneCache(): void {
   void prunePrefix(TRANSLATE_PREFIX, TRANSLATE_LIMIT);
 }
 
-export function explainKey(word: string, level: Level, model: string): string {
+export function explainKey(word: string, context: string, level: Level, model: string): string {
   const normalized = word.replace(/\s+/g, ' ').trim().toLowerCase();
-  return EXPLAIN_PREFIX + hashKey(SCHEMA_VERSION + '|explain|' + level + '|' + model + '|' + normalized);
+  const normalizedContext = normalizeText(context).toLowerCase().slice(0, 400);
+  return EXPLAIN_PREFIX + hashKey(
+    SCHEMA_VERSION + '|explain-context|' + level + '|' + model + '|' + normalized + '|' + normalizedContext,
+  );
 }
 
 export function getCachedExplain(key: string): Promise<ExplainResult | null> {
