@@ -11,7 +11,8 @@ import {
   showTrigger,
   type SelectedText,
   type TriggerRefs,
-} from '../lib/selection';import { initSpeech, speak, stopSpeaking } from '../lib/speech';
+} from '../lib/selection';
+import { initSpeech, speak, stopSpeaking } from '../lib/speech';
 import { sendToBackground } from '../lib/storage';
 import { injectStyles, PANEL_CLASS } from '../lib/style';
 import {
@@ -38,13 +39,13 @@ const AUTO_TRANSLATE_DELAY_MS = 220;
 
 const ACTION_TITLE: Record<Action, string> = {
   simplify: 'Rewrite this in simple English',
-  translate: 'Say this with simpler words',
+  translate: 'Explain this with simpler English',
 };
 
 /** Why an action is greyed out, so the tab bar doubles as an explanation of the boundary. */
 const ACTION_UNAVAILABLE: Record<Action, string> = {
   simplify: 'Select at least 20 characters or 12 words to simplify',
-  translate: 'Select a word, a phrase or one sentence to restate',
+  translate: 'Select a word, a phrase or one sentence to explain',
 };
 
 interface PanelRefs {
@@ -98,6 +99,8 @@ let observer: MutationObserver | null = null;
 let scanTimer: number | null = null;
 let trigger: TriggerRefs | null = null;
 let pendingSelection: SelectedText | null = null;
+let blockTrigger: HTMLButtonElement | null = null;
+let hoveredBlock: HTMLElement | null = null;
 
 function isActive(): boolean {
   if (!settings || !settings.enabled) return false;
@@ -140,7 +143,7 @@ function buildPanel(level: Level): PanelRefs {
 
   const tabs: Record<Action, HTMLButtonElement> = {
     simplify: makeTab('simplify', 'Simplify'),
-    translate: makeTab('translate', 'Translate'),
+    translate: makeTab('translate', 'Explain'),
   };
 
   const spacer = document.createElement('span');
@@ -161,7 +164,7 @@ function buildPanel(level: Level): PanelRefs {
   body.className = PANEL_CLASS + '__body';
   const status = document.createElement('p');
   status.className = PANEL_CLASS + '__status ' + PANEL_CLASS + '__dots';
-  status.textContent = 'Working';
+  status.textContent = 'Preparing';
   body.appendChild(status);
 
   root.append(meta, body);
@@ -288,12 +291,12 @@ function appendSection(
 ): void {
   if (entries.length === 0) return;
 
-  const section = document.createElement('div');
+  const section = document.createElement('details');
   section.className = PANEL_CLASS + '__section';
 
-  const heading = document.createElement('p');
+  const heading = document.createElement('summary');
   heading.className = PANEL_CLASS + '__section-title';
-  heading.textContent = title;
+  heading.textContent = title + ' (' + entries.length + ')';
   section.appendChild(heading);
 
   for (const entry of entries) {
@@ -512,7 +515,7 @@ function renderLoading(open: OpenPanel): void {
   setHidden(open.refs.retry, true);
   const node = document.createElement('p');
   node.className = PANEL_CLASS + '__status ' + PANEL_CLASS + '__dots';
-  node.textContent = open.action === 'translate' ? 'Finding simpler words' : 'Simplifying';
+  node.textContent = open.action === 'translate' ? 'Explaining in simpler English' : 'Simplifying and checking the result';
   open.refs.body.appendChild(node);
 }
 
@@ -869,6 +872,45 @@ function toggleBlock(block: HTMLElement, point: PointerPoint): void {
   });
 }
 
+function ensureBlockTrigger(): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'readassistant-block-trigger';
+  button.textContent = '✦';
+  button.title = 'Simplify this paragraph';
+  button.setAttribute('aria-label', 'Simplify this paragraph');
+  button.setAttribute('data-ra-skip', '1');
+  button.hidden = true;
+  document.documentElement.appendChild(button);
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const block = hoveredBlock;
+    if (!block) return;
+    const rect = block.getBoundingClientRect();
+    button.hidden = true;
+    toggleBlock(block, { x: rect.right, y: rect.top });
+  });
+  return button;
+}
+
+function trackBlockTrigger(event: MouseEvent): void {
+  if (!isActive() || !blockTrigger) return;
+  const target = event.target as HTMLElement | null;
+  if (!target || target === blockTrigger || target.closest('.' + PANEL_CLASS + ', .readassistant-trigger')) return;
+  const block = resolveBlock(target);
+  if (!block) {
+    hoveredBlock = null;
+    blockTrigger.hidden = true;
+    return;
+  }
+  hoveredBlock = block;
+  const rect = block.getBoundingClientRect();
+  blockTrigger.style.left = Math.round(Math.min(window.innerWidth - 38, Math.max(8, rect.right - 30))) + 'px';
+  blockTrigger.style.top = Math.round(Math.max(8, rect.top + 4)) + 'px';
+  blockTrigger.hidden = false;
+}
+
 function clearSelectionTrigger(): void {
   pendingSelection = null;
   if (trigger) hideTrigger(trigger);
@@ -902,7 +944,7 @@ function refreshSelectionTrigger(event: Event): void {
       return;
     }
     pendingSelection = found;
-    // "Run right away" only applies when Translate is the selection's only option. A sentence or a
+    // "Run right away" only applies when Explain is the selection's only option. A sentence or a
     // passage still waits for a click, so brushing over text never fires a request.
     if (auto && found.actions.length === 1 && found.actions[0] === 'translate') {
       if (trigger) hideTrigger(trigger);
@@ -946,7 +988,7 @@ function onDocumentClick(event: MouseEvent): void {
     clearSelectionTrigger();
     return;
   }
-  void toggleBlock(block, { x: event.clientX, y: event.clientY });
+  if (settings?.clickParagraphs) void toggleBlock(block, { x: event.clientX, y: event.clientY });
 }
 
 function scan(): void {
@@ -981,6 +1023,8 @@ function deactivate(): void {
   closeAll();
   clearSelectionTrigger();
   stopSpeaking();
+  hoveredBlock = null;
+  if (blockTrigger) blockTrigger.hidden = true;
   for (const element of document.querySelectorAll<HTMLElement>('[data-ra-ready="1"]')) {
     delete element.dataset.raReady;
     delete element.dataset.raActive;
@@ -1009,10 +1053,12 @@ async function init(): Promise<void> {
   initSpeech();
 
   trigger = ensureTrigger(document);
+  blockTrigger = ensureBlockTrigger();
   trigger.root.addEventListener('mousedown', (event) => event.preventDefault());
   trigger.root.addEventListener('click', onTriggerClick);
 
   document.addEventListener('click', onDocumentClick, true);
+  document.addEventListener('mousemove', trackBlockTrigger, true);
   document.addEventListener('mouseup', refreshSelectionTrigger, true);
   document.addEventListener('keyup', refreshSelectionTrigger, true);
   window.addEventListener('scroll', clearSelectionTrigger, true);

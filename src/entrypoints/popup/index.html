@@ -1,116 +1,40 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>readAssistant</title>
-    <style>
-      :root { color-scheme: light dark; }
-      * { box-sizing: border-box; }
-      body {
-        width: 296px;
-        margin: 0;
-        padding: 12px;
-        font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        color: #1b2432;
-        background: #fff;
-      }
-      header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-      h1 { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0.02em; }
-      header .grow { flex: 1; }
-      .field { margin-bottom: 10px; }
-      .field > label { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #5b6b82; }
-      select, input[type='password'], input[type='text'] {
-        width: 100%; padding: 6px 8px; border: 1px solid #d3dae4; border-radius: 6px;
-        font: inherit; background: #fff; color: inherit;
-      }
-      select:focus, input:focus { outline: none; border-color: #2d6edc; }
-      .row { display: flex; align-items: center; gap: 6px; }
-      .row input { margin: 0; }
-      .row label { font-size: 12.5px; color: #1b2432; }
-      .switch { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #5b6b82; }
-      footer { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
-      button {
-        padding: 6px 12px; border: 0; border-radius: 6px; background: #2d6edc; color: #fff;
-        font: inherit; font-weight: 600; cursor: pointer;
-      }
-      button:disabled { opacity: 0.55; cursor: default; }
-      #status { font-size: 12px; color: #5b6b82; }
-      #status.error { color: #b3261e; }
-      .hint { margin: 0 0 10px; font-size: 11.5px; color: #6b7a91; }
-    </style>
-  </head>
-  <body>
-    <header>
-      <h1>readAssistant</h1>
-      <span class="grow"></span>
-      <label class="switch"><input id="enabled" type="checkbox" /> On</label>
-    </header>
-
-    <p class="hint">
-      Click a paragraph to read it in simpler English. Select a word or a short phrase to get it said again with
-      simpler words. Select a sentence to get a simple rewrite plus its key words and phrases. Everything stays
-      in English.
-    </p>
-
-    <div class="field">
-      <label for="level">Reading level</label>
-      <select id="level">
-        <option value="A2">A2 &mdash; very simple</option>
-        <option value="B1">B1 &mdash; simple</option>
-        <option value="B2">B2 &mdash; moderate</option>
-      </select>
+<head>
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>readAssistant</title>
+  <style>
+    :root{color-scheme:light}*{box-sizing:border-box}body{width:336px;margin:0;padding:16px;font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#172033;background:#f7f9fc}
+    header{display:flex;align-items:center;gap:10px;margin-bottom:14px}.logo{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;color:#fff;background:linear-gradient(135deg,#3978e8,#6457d9);font-size:17px;font-weight:800}
+    h1{margin:0;font-size:15px;line-height:1.2}.tagline{margin:1px 0 0;color:#69778e;font-size:11.5px}.grow{flex:1}.card{padding:12px;margin-bottom:10px;border:1px solid #e1e6ef;border-radius:10px;background:#fff}
+    .field{margin-bottom:11px}.field:last-child{margin-bottom:0}.field>label,.section-label{display:block;margin-bottom:5px;color:#5d6a80;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+    select,input[type=password],input[type=text]{width:100%;padding:7px 9px;border:1px solid #cfd7e5;border-radius:7px;font:inherit;background:#fff;color:inherit}
+    select:focus,input:focus,button:focus-visible,summary:focus-visible{outline:2px solid rgba(45,110,220,.28);outline-offset:1px;border-color:#2d6edc}.row{display:flex;align-items:center;gap:7px}.row input{margin:0}.row label{flex:1;font-size:12.5px}
+    .switch{display:flex;align-items:center;gap:6px;font-size:12px;color:#4f5e74}.how{margin:0;padding-left:18px;color:#4f5e74;font-size:12px}.how li+li{margin-top:3px}
+    details{margin-bottom:10px;border:1px solid #e1e6ef;border-radius:10px;background:#fff}summary{padding:10px 12px;cursor:pointer;font-weight:700;list-style-position:inside}.advanced{padding:2px 12px 12px}.key-row{display:grid;grid-template-columns:1fr auto;gap:6px}
+    button{padding:7px 11px;border:0;border-radius:7px;background:#2d6edc;color:#fff;font:inherit;font-weight:650;cursor:pointer}button.secondary{border:1px solid #cfd7e5;background:#fff;color:#3d4b61}button:disabled{opacity:.55;cursor:default}
+    .api-actions{display:flex;align-items:center;gap:7px;margin-top:7px}.help{color:#2d6edc;text-decoration:none;font-size:11.5px}footer{display:flex;align-items:center;gap:8px}#status{flex:1;min-height:18px;color:#55715e;font-size:12px}#status.error{color:#b3261e}.privacy{margin:7px 0 0;color:#7b8799;font-size:10.5px}
+  </style>
+</head>
+<body>
+  <header><span class="logo" aria-hidden="true">R</span><div><h1>readAssistant</h1><p class="tagline">Understand English in English</p></div><span class="grow"></span><label class="switch"><input id="enabled" type="checkbox" /> On</label></header>
+  <section class="card">
+    <div class="field"><label for="level">Reading level</label><select id="level"><option value="A2">A2 — very simple</option><option value="B1">B1 — simple</option><option value="B2">B2 — moderate</option></select></div>
+    <div class="field"><label for="accent">Pronunciation</label><select id="accent"><option value="uk">British</option><option value="us">American</option></select></div>
+    <div class="field row"><input id="siteOff" type="checkbox" /><label id="siteLabel" for="siteOff">Disable on this site</label></div>
+  </section>
+  <section class="card"><span class="section-label">How to use</span><ul class="how"><li>Select a word → <strong>Explain</strong></li><li>Select a sentence → <strong>Simplify</strong></li><li>Hover a paragraph → use the <strong>wand</strong></li></ul></section>
+  <details><summary>Advanced settings</summary><div class="advanced">
+    <div class="field"><label for="panelMode">Panel position</label><select id="panelMode"><option value="below">Below the text</option><option value="side">Beside the text</option><option value="float">Follow the cursor</option></select></div>
+    <div class="field row"><input id="clickParagraphs" type="checkbox" /><label for="clickParagraphs">Click paragraph body to simplify</label></div>
+    <div class="field row"><input id="autoTranslate" type="checkbox" /><label for="autoTranslate">Explain short selections automatically</label></div>
+    <div class="field row"><input id="phonetics" type="checkbox" /><label for="phonetics">Show phonetics above all words</label></div>
+    <div class="field"><label for="model">Model</label><select id="model"><option value="deepseek-chat">deepseek-chat (recommended)</option><option value="deepseek-reasoner">deepseek-reasoner</option></select></div>
+    <div class="field"><label for="apiKey">DeepSeek API key</label><div class="key-row"><input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" /><button id="showKey" class="secondary" type="button">Show</button></div>
+      <div class="api-actions"><button id="testKey" class="secondary" type="button">Test connection</button><a class="help" href="https://platform.deepseek.com/api_keys" target="_blank" rel="noreferrer">Get an API key ↗</a></div>
+      <p class="privacy">Stored only in Chrome on this device. Selected text is sent to DeepSeek when you run an action.</p>
     </div>
-
-    <div class="field">
-      <label for="panelMode">Where to show it</label>
-      <select id="panelMode">
-        <option value="below">Below the paragraph</option>
-        <option value="side">Beside the paragraph</option>
-        <option value="float">Follow the cursor</option>
-      </select>
-    </div>
-
-    <div class="field row">
-      <input id="autoTranslate" type="checkbox" />
-      <label for="autoTranslate">Translate words as soon as I select them</label>
-    </div>
-
-    <div class="field">
-      <label for="accent">Pronunciation</label>
-      <select id="accent">
-        <option value="uk">British &mdash; en-GB</option>
-        <option value="us">American &mdash; en-US</option>
-      </select>
-    </div>
-
-    <div class="field row">
-      <input id="phonetics" type="checkbox" />
-      <label for="phonetics">Show phonetics above every word</label>
-    </div>
-
-    <div class="field">
-      <label for="model">Model</label>
-      <select id="model">
-        <option value="deepseek-chat">deepseek-chat (recommended)</option>
-        <option value="deepseek-reasoner">deepseek-reasoner</option>
-      </select>
-    </div>
-
-    <div class="field">
-      <label for="apiKey">DeepSeek API key</label>
-      <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false" />
-    </div>
-
-    <div class="field row">
-      <input id="siteOff" type="checkbox" />
-      <label id="siteLabel" for="siteOff">Disable on this site</label>
-    </div>
-
-    <footer>
-      <button id="save" type="button">Save</button>
-      <span id="status"></span>
-    </footer>
-    <script type="module" src="./main.ts"></script>
-  </body>
-</html>
+  </div></details>
+  <footer><button id="save" type="button">Save settings</button><span id="status" role="status" aria-live="polite"></span></footer>
+  <script type="module" src="./main.ts"></script>
+</body></html>

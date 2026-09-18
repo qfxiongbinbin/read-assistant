@@ -73,7 +73,9 @@ export interface Settings {
   panelMode: PanelMode;
   accent: Accent;
   phonetics: boolean;
-  /** Run on words and short phrases right after they are selected, without a click. */
+  /** Simplify a paragraph when its body is clicked. Off by default to avoid hijacking normal reading. */
+  clickParagraphs: boolean;
+  /** Explain words and short phrases right after they are selected, without a click. */
   autoTranslate: boolean;
   model: string;
   apiKey: string;
@@ -85,7 +87,8 @@ export const DEFAULT_SETTINGS: Settings = {
   level: 'B1',
   panelMode: 'below',
   accent: 'uk',
-  phonetics: true,
+  phonetics: false,
+  clickParagraphs: false,
   autoTranslate: false,
   model: 'deepseek-chat',
   apiKey: '',
@@ -106,6 +109,9 @@ export type SimplifyResponse =
   | { ok: false; error: string; attempts: number };
 
 export type GetSettingsRequest = { type: 'getSettings' };
+
+export type TestApiKeyRequest = { type: 'testApiKey'; apiKey: string };
+export type TestApiKeyResponse = { ok: true } | { ok: false; error: string };
 
 export type TranslateRequest = {
   type: 'translate';
@@ -141,6 +147,7 @@ export type RuntimeMessage =
   | TranslateRequest
   | ExplainRequest
   | GetSettingsRequest
+  | TestApiKeyRequest
   | PhoneticsRequest;
 
 export interface CachedEntry<T> {

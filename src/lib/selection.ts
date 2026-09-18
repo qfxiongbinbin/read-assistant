@@ -93,7 +93,7 @@ export function ensureTrigger(doc: Document): TriggerRefs {
 
   const buttons: Record<Action, HTMLButtonElement> = {
     simplify: makeTriggerButton(doc, 'simplify', 'Simplify', 'Rewrite this in simple English'),
-    translate: makeTriggerButton(doc, 'translate', 'Translate', 'Say this with simpler words'),
+    translate: makeTriggerButton(doc, 'translate', 'Explain', 'Explain this with simpler English'),
   };
   root.append(buttons.simplify, buttons.translate);
   (doc.documentElement ?? doc.body).appendChild(root);

@@ -1,6 +1,7 @@
 import type { ChatMessage } from './prompt';
 
 const ENDPOINT = 'https://api.deepseek.com/chat/completions';
+const MODELS_ENDPOINT = 'https://api.deepseek.com/models';
 const REQUEST_TIMEOUT_MS = 45000;
 const RETRY_DELAY_MS = 900;
 
@@ -26,11 +27,28 @@ function sleep(ms: number): Promise<void> {
 }
 
 function describeStatus(status: number, body: string): string {
-  if (status === 401) return 'DeepSeek rejected the API key (401). Check the key in the popup.';
-  if (status === 402) return 'DeepSeek account has no balance (402).';
-  if (status === 429) return 'DeepSeek rate limit reached (429). Wait a moment and retry.';
-  if (status >= 500) return 'DeepSeek server error (' + status + '). Retry later.';
-  return 'DeepSeek request failed (' + status + '): ' + body.slice(0, 180);
+  if (status === 401) return 'This API key is not valid. Check it in readAssistant settings.';
+  if (status === 402) return 'Your DeepSeek account has no available balance.';
+  if (status === 429) return 'Too many requests. Wait a moment, then try again.';
+  if (status >= 500) return 'DeepSeek is temporarily unavailable. Try again later.';
+  return 'DeepSeek could not complete the request (' + status + '): ' + body.slice(0, 120);
+}
+
+export async function testApiKey(apiKey: string): Promise<void> {
+  const key = apiKey.trim();
+  if (!key) throw new LlmError('Enter a DeepSeek API key first.');
+  let response: Response;
+  try {
+    response = await fetch(MODELS_ENDPOINT, {
+      headers: { Authorization: 'Bearer ' + key },
+    });
+  } catch {
+    throw new LlmError('Could not connect to DeepSeek. Check your network and try again.');
+  }
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new LlmError(describeStatus(response.status, body), response.status);
+  }
 }
 
 async function postOnce(options: ChatOptions): Promise<Response> {
@@ -64,9 +82,9 @@ export async function chatJson(options: ChatOptions): Promise<string> {
     response = await postOnce(options);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new LlmError('DeepSeek request timed out after ' + REQUEST_TIMEOUT_MS / 1000 + 's.');
+      throw new LlmError('DeepSeek took too long to respond. Please try again.');
     }
-    throw new LlmError('Could not reach api.deepseek.com: ' + (error instanceof Error ? error.message : String(error)));
+    throw new LlmError('Could not connect to DeepSeek. Check your network and try again.');
   }
 
   if (!response.ok) {
